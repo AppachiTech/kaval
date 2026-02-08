@@ -1,0 +1,5 @@
+/target
+*.rs.bak
+*.tar.gz
+/tmp/
+.DS_Store

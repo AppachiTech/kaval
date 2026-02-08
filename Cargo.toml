@@ -1,0 +1,27 @@
+[package]
+name = "kaval"
+version = "0.0.2"
+edition = "2021"
+license = "MIT"
+description = "Guard your ports. A developer-focused port and process manager TUI."
+repository = "https://github.com/AppachiTech/kaval"
+homepage = "https://www.appachi.tech/kaval/"
+readme = "README.md"
+authors = ["Madhubalan Appachi <madhu@appachi.tech>"]
+default-run = "kav"
+
+[[bin]]
+name = "kav"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4.5", features = ["derive"] }
+sysinfo = "0.32"
+netstat2 = "0.11"
+chrono = "0.4"
+anyhow = "1.0"
+
+[build-dependencies]
+chrono = "0.4"
