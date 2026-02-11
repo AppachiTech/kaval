@@ -23,6 +23,7 @@ pub enum ServiceCategory {
     Database,
     Cache,
     Container,
+    Browser,
     System,
     Unknown,
 }

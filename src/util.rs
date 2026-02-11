@@ -41,6 +41,34 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
         return Some((Some("Colima"), ServiceCategory::Container));
     }
 
+    // Dev tools
+    if name.contains("ollama") {
+        return Some((Some("Ollama"), ServiceCategory::DevServer));
+    }
+    if name.contains("code helper") || name.starts_with("code - ") {
+        return Some((Some("VS Code"), ServiceCategory::DevServer));
+    }
+    if name.contains("cursor") && name.contains("helper") {
+        return Some((Some("Cursor"), ServiceCategory::DevServer));
+    }
+    if name.contains("electron") {
+        return Some((Some("Electron"), ServiceCategory::DevServer));
+    }
+
+    // Browsers
+    if name.contains("brave browser") || name.contains("brave helper") {
+        return Some((Some("Brave"), ServiceCategory::Browser));
+    }
+    if name.contains("google chrome") || name.contains("chrome helper") {
+        return Some((Some("Chrome"), ServiceCategory::Browser));
+    }
+    if name.contains("firefox") || name.contains("geckodriver") {
+        return Some((Some("Firefox"), ServiceCategory::Browser));
+    }
+    if name.contains("safari") || name.contains("webkit") {
+        return Some((Some("Safari"), ServiceCategory::Browser));
+    }
+
     // System services
     if name.contains("sshd") {
         return Some((Some("SSH"), ServiceCategory::System));
@@ -50,6 +78,27 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
     }
     if name.contains("httpd") || name.contains("apache") {
         return Some((Some("Apache"), ServiceCategory::System));
+    }
+    if name.contains("controlcenter") {
+        return Some((Some("AirPlay"), ServiceCategory::System));
+    }
+    if name.contains("sharingd") {
+        return Some((Some("Sharing"), ServiceCategory::System));
+    }
+    if name.contains("rapportd") {
+        return Some((Some("Rapport"), ServiceCategory::System));
+    }
+    if name.contains("identityservicesd") {
+        return Some((Some("Identity"), ServiceCategory::System));
+    }
+    if name.contains("grafana") {
+        return Some((Some("Grafana"), ServiceCategory::System));
+    }
+    if name.contains("prometheus") {
+        return Some((Some("Prometheus"), ServiceCategory::System));
+    }
+    if name.contains("caddy") {
+        return Some((Some("Caddy"), ServiceCategory::System));
     }
 
     None
@@ -87,11 +136,16 @@ fn identify_by_port(port: u16) -> (Option<&'static str>, ServiceCategory) {
         // Container / orchestration
         2375 | 2376 => (Some("Docker"), ServiceCategory::Container),
 
+        // Dev tools
+        11434 => (Some("Ollama"), ServiceCategory::DevServer),
+
         // System
         22 => (Some("SSH"), ServiceCategory::System),
         80 => (Some("HTTP"), ServiceCategory::System),
         443 => (Some("HTTPS"), ServiceCategory::System),
         53 => (Some("DNS"), ServiceCategory::System),
+        9090 => (Some("Prometheus"), ServiceCategory::System),
+        2019 => (Some("Caddy Admin"), ServiceCategory::System),
 
         _ => (None, ServiceCategory::Unknown),
     }

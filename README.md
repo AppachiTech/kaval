@@ -1,5 +1,8 @@
 # Kaval — Guard your ports.
 
+[![CI](https://github.com/AppachiTech/kaval/actions/workflows/ci.yml/badge.svg)](https://github.com/AppachiTech/kaval/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Kaval** (காவல், Tamil for "Guard/Watch") is a developer-focused port and process manager TUI built in Rust.
 
 Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows all listening ports, maps them to processes, identifies known dev tools, and lets you kill with a keystroke.
@@ -15,11 +18,40 @@ Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows all listening ports, map
 
 ## Install
 
+**Homebrew (recommended):**
+
 ```sh
-# Build from source
+brew tap AppachiTech/kaval && brew install kaval
+```
+
+**Manual (macOS):**
+
+```sh
+curl -sL https://downloads.appachi.tech/macos/kav-macos-latest.tar.gz | tar xz
+sudo mv kav /usr/local/bin/
+```
+
+**Manual (Linux):**
+
+```sh
+curl -sL https://downloads.appachi.tech/linux/kav-linux-latest.tar.gz | tar xz
+sudo mv kav /usr/local/bin/
+```
+
+**Build from source:**
+
+```sh
 cargo build --release
 sudo cp target/release/kav /usr/local/bin/
 ```
+
+## Update
+
+```sh
+brew upgrade kaval                # Homebrew
+```
+
+Manual install users can re-run the install command — the URL always points to the latest release.
 
 ## Usage
 
@@ -46,6 +78,21 @@ kav kill 3000 -f     # Force kill (SIGKILL)
 | `r` | Force refresh |
 | `q` / `Esc` | Quit |
 
+## Privacy
+
+- **Zero storage:** Kaval writes nothing to disk. No config, no logs, no database.
+- **Zero network:** Kaval makes no network connections of any kind.
+- **Zero telemetry:** No analytics, no crash reports, no data collection.
+
+## Links
+
+- [Website](https://www.appachi.tech/kaval/)
+- [FAQ](https://www.appachi.tech/kaval/faq)
+- [Privacy Policy](https://www.appachi.tech/kaval/privacy/)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Security Policy](SECURITY.md)
+
 ## License
 
-MIT — Madhubalan Appachi
+MIT — [Madhubalan Appachi](https://www.linkedin.com/in/madhuappachi/)
