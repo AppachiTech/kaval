@@ -58,6 +58,7 @@ bump-version:
 	new_ver="$$major.$$minor.$$patch"; \
 	echo "Bumping version: $$current -> $$new_ver"; \
 	sed -i '' "s/^version = \"$$current\"/version = \"$$new_ver\"/" Cargo.toml; \
+	cargo check --quiet 2>/dev/null; \
 	git commit -am "chore: bump version to $$new_ver"; \
 	git tag "v$$new_ver"; \
 	echo "\033[32mSuccessfully bumped to $$new_ver\033[0m"
