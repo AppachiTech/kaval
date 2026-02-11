@@ -94,20 +94,56 @@ fn main() -> Result<()> {
 
 fn category_color(cat: ServiceCategory) -> Color {
     match cat {
-        ServiceCategory::DevServer => Color::Rgb { r: 34, g: 197, b: 94 },   // green
-        ServiceCategory::Database => Color::Rgb { r: 234, g: 179, b: 8 },    // yellow
-        ServiceCategory::Cache => Color::Rgb { r: 168, g: 85, b: 247 },      // purple
-        ServiceCategory::Container => Color::Rgb { r: 96, g: 165, b: 250 },  // blue
-        ServiceCategory::Browser => Color::Rgb { r: 251, g: 146, b: 60 },    // orange
-        ServiceCategory::System => Color::Rgb { r: 140, g: 140, b: 145 },    // gray
-        ServiceCategory::Unknown => Color::Rgb { r: 100, g: 100, b: 105 },   // dim gray
+        ServiceCategory::DevServer => Color::Rgb {
+            r: 34,
+            g: 197,
+            b: 94,
+        }, // green
+        ServiceCategory::Database => Color::Rgb {
+            r: 234,
+            g: 179,
+            b: 8,
+        }, // yellow
+        ServiceCategory::Cache => Color::Rgb {
+            r: 168,
+            g: 85,
+            b: 247,
+        }, // purple
+        ServiceCategory::Container => Color::Rgb {
+            r: 96,
+            g: 165,
+            b: 250,
+        }, // blue
+        ServiceCategory::Browser => Color::Rgb {
+            r: 251,
+            g: 146,
+            b: 60,
+        }, // orange
+        ServiceCategory::System => Color::Rgb {
+            r: 140,
+            g: 140,
+            b: 145,
+        }, // gray
+        ServiceCategory::Unknown => Color::Rgb {
+            r: 100,
+            g: 100,
+            b: 105,
+        }, // dim gray
     }
 }
 
 fn proto_color(proto: models::Protocol) -> Color {
     match proto {
-        models::Protocol::Tcp => Color::Rgb { r: 6, g: 182, b: 212 },    // cyan
-        models::Protocol::Udp => Color::Rgb { r: 100, g: 100, b: 105 },  // dim
+        models::Protocol::Tcp => Color::Rgb {
+            r: 6,
+            g: 182,
+            b: 212,
+        }, // cyan
+        models::Protocol::Udp => Color::Rgb {
+            r: 100,
+            g: 100,
+            b: 105,
+        }, // dim
     }
 }
 
@@ -138,8 +174,10 @@ fn print_table(entries: &[models::PortEntry]) {
 
     // Build display rows: group browser entries by (pid, service)
     let mut rows: Vec<DisplayRow> = Vec::new();
-    let mut browser_groups: std::collections::HashMap<(u32, &'static str), Vec<&models::PortEntry>> =
-        std::collections::HashMap::new();
+    let mut browser_groups: std::collections::HashMap<
+        (u32, &'static str),
+        Vec<&models::PortEntry>,
+    > = std::collections::HashMap::new();
 
     for e in entries {
         if e.category == ServiceCategory::Browser {
@@ -171,8 +209,14 @@ fn print_table(entries: &[models::PortEntry]) {
         .collect();
     // Sort grouped rows by process name for consistent ordering
     grouped.sort_by(|a, b| {
-        let a_name = match a { DisplayRow::Grouped(g) => &g.process_name, _ => unreachable!() };
-        let b_name = match b { DisplayRow::Grouped(g) => &g.process_name, _ => unreachable!() };
+        let a_name = match a {
+            DisplayRow::Grouped(g) => &g.process_name,
+            _ => unreachable!(),
+        };
+        let b_name = match b {
+            DisplayRow::Grouped(g) => &g.process_name,
+            _ => unreachable!(),
+        };
         a_name.cmp(b_name)
     });
     rows.extend(grouped);
@@ -180,10 +224,26 @@ fn print_table(entries: &[models::PortEntry]) {
     let out = io::stdout();
     let mut w = out.lock();
 
-    let hdr = Color::Rgb { r: 120, g: 120, b: 125 };
-    let dim = Color::Rgb { r: 100, g: 100, b: 105 };
-    let divider = Color::Rgb { r: 60, g: 60, b: 65 };
-    let light = Color::Rgb { r: 160, g: 160, b: 165 };
+    let hdr = Color::Rgb {
+        r: 120,
+        g: 120,
+        b: 125,
+    };
+    let dim = Color::Rgb {
+        r: 100,
+        g: 100,
+        b: 105,
+    };
+    let divider = Color::Rgb {
+        r: 60,
+        g: 60,
+        b: 65,
+    };
+    let light = Color::Rgb {
+        r: 160,
+        g: 160,
+        b: 165,
+    };
 
     // Header
     let _ = write!(
@@ -191,7 +251,14 @@ fn print_table(entries: &[models::PortEntry]) {
         "{}{}  {:<6} {:<5} {:<22} {:<20} {:<7} {:<7} {:<9} {}{}{}\n",
         SetForegroundColor(hdr),
         SetAttribute(Attribute::Bold),
-        "PORT", "PROTO", "PROCESS", "SERVICE", "PID", "CPU", "MEM", "UPTIME",
+        "PORT",
+        "PROTO",
+        "PROCESS",
+        "SERVICE",
+        "PID",
+        "CPU",
+        "MEM",
+        "UPTIME",
         SetAttribute(Attribute::Reset),
         ResetColor,
     );
@@ -207,25 +274,61 @@ fn print_table(entries: &[models::PortEntry]) {
         match row {
             DisplayRow::Single(e) => {
                 let cat_col = category_color(e.category);
-                let port_col = if e.known_service.is_some() { Color::White } else { light };
+                let port_col = if e.known_service.is_some() {
+                    Color::White
+                } else {
+                    light
+                };
 
-                let _ = write!(w, "{}{}  {:<6}{}", SetForegroundColor(port_col), SetAttribute(Attribute::Bold), e.port, SetAttribute(Attribute::Reset));
-                let _ = write!(w, "{} {:<5}", SetForegroundColor(proto_color(e.protocol)), e.protocol);
-                let _ = write!(w, "{} {:<22}", SetForegroundColor(cat_col), truncate(&e.process_name, 22));
+                let _ = write!(
+                    w,
+                    "{}{}  {:<6}{}",
+                    SetForegroundColor(port_col),
+                    SetAttribute(Attribute::Bold),
+                    e.port,
+                    SetAttribute(Attribute::Reset)
+                );
+                let _ = write!(
+                    w,
+                    "{} {:<5}",
+                    SetForegroundColor(proto_color(e.protocol)),
+                    e.protocol
+                );
+                let _ = write!(
+                    w,
+                    "{} {:<22}",
+                    SetForegroundColor(cat_col),
+                    truncate(&e.process_name, 22)
+                );
 
                 let service = e.known_service.unwrap_or("");
                 if service.is_empty() {
                     let _ = write!(w, "{} {:<20}", SetForegroundColor(divider), "·");
                 } else {
-                    let _ = write!(w, "{}{} {:<20}{}", SetForegroundColor(cat_col), SetAttribute(Attribute::Bold), service, SetAttribute(Attribute::Reset));
+                    let _ = write!(
+                        w,
+                        "{}{} {:<20}{}",
+                        SetForegroundColor(cat_col),
+                        SetAttribute(Attribute::Bold),
+                        service,
+                        SetAttribute(Attribute::Reset)
+                    );
                 }
 
                 let _ = write!(w, "{} {:<7}", SetForegroundColor(dim), e.pid);
                 let cpu_str = format!("{:.1}%", e.cpu_percent);
                 let cpu_col = if e.cpu_percent > 50.0 {
-                    Color::Rgb { r: 239, g: 68, b: 68 }
+                    Color::Rgb {
+                        r: 239,
+                        g: 68,
+                        b: 68,
+                    }
                 } else if e.cpu_percent > 10.0 {
-                    Color::Rgb { r: 234, g: 179, b: 8 }
+                    Color::Rgb {
+                        r: 234,
+                        g: 179,
+                        b: 8,
+                    }
                 } else {
                     dim
                 };
@@ -238,19 +341,62 @@ fn print_table(entries: &[models::PortEntry]) {
                 let cat_col = category_color(g.category);
                 let svc_label = format!("{} ×{}", g.service, g.count);
 
-                let _ = write!(w, "{}{}  {:<6}{}", SetForegroundColor(dim), SetAttribute(Attribute::Bold), "···", SetAttribute(Attribute::Reset));
-                let _ = write!(w, "{} {:<5}", SetForegroundColor(proto_color(g.protocol)), g.protocol);
-                let _ = write!(w, "{} {:<22}", SetForegroundColor(cat_col), truncate(&g.process_name, 22));
-                let _ = write!(w, "{}{} {:<20}{}", SetForegroundColor(cat_col), SetAttribute(Attribute::Bold), svc_label, SetAttribute(Attribute::Reset));
+                let _ = write!(
+                    w,
+                    "{}{}  {:<6}{}",
+                    SetForegroundColor(dim),
+                    SetAttribute(Attribute::Bold),
+                    "···",
+                    SetAttribute(Attribute::Reset)
+                );
+                let _ = write!(
+                    w,
+                    "{} {:<5}",
+                    SetForegroundColor(proto_color(g.protocol)),
+                    g.protocol
+                );
+                let _ = write!(
+                    w,
+                    "{} {:<22}",
+                    SetForegroundColor(cat_col),
+                    truncate(&g.process_name, 22)
+                );
+                let _ = write!(
+                    w,
+                    "{}{} {:<20}{}",
+                    SetForegroundColor(cat_col),
+                    SetAttribute(Attribute::Bold),
+                    svc_label,
+                    SetAttribute(Attribute::Reset)
+                );
                 let _ = write!(w, "{} {:<7}", SetForegroundColor(dim), g.pid);
-                let _ = write!(w, "{} {:<7}", SetForegroundColor(dim), format!("{:.1}%", g.cpu_percent));
-                let _ = write!(w, "{} {:<9}", SetForegroundColor(light), if g.memory_mb >= 1024.0 { format!("{:.1} GB", g.memory_mb / 1024.0) } else { format!("{:.0} MB", g.memory_mb) });
+                let _ = write!(
+                    w,
+                    "{} {:<7}",
+                    SetForegroundColor(dim),
+                    format!("{:.1}%", g.cpu_percent)
+                );
+                let _ = write!(
+                    w,
+                    "{} {:<9}",
+                    SetForegroundColor(light),
+                    if g.memory_mb >= 1024.0 {
+                        format!("{:.1} GB", g.memory_mb / 1024.0)
+                    } else {
+                        format!("{:.0} MB", g.memory_mb)
+                    }
+                );
                 let _ = write!(w, "{} {}", SetForegroundColor(dim), {
                     let secs = g.uptime.as_secs();
-                    if secs < 60 { format!("{}s", secs) }
-                    else if secs < 3600 { format!("{}m", secs / 60) }
-                    else if secs < 86400 { format!("{}h {}m", secs / 3600, (secs % 3600) / 60) }
-                    else { format!("{}d {}h", secs / 86400, (secs % 86400) / 3600) }
+                    if secs < 60 {
+                        format!("{}s", secs)
+                    } else if secs < 3600 {
+                        format!("{}m", secs / 60)
+                    } else if secs < 86400 {
+                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                    } else {
+                        format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
+                    }
                 });
                 let _ = writeln!(w, "{}", ResetColor);
             }
@@ -259,7 +405,10 @@ fn print_table(entries: &[models::PortEntry]) {
 
     // Summary
     let total = entries.len();
-    let tcp = entries.iter().filter(|e| e.protocol == models::Protocol::Tcp).count();
+    let tcp = entries
+        .iter()
+        .filter(|e| e.protocol == models::Protocol::Tcp)
+        .count();
     let udp = total - tcp;
     let services = entries.iter().filter(|e| e.known_service.is_some()).count();
     let _ = write!(

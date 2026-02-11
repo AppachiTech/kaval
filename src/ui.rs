@@ -63,8 +63,7 @@ impl App {
                 self.apply_filter();
             }
             Err(e) => {
-                self.status_msg =
-                    Some((format!("Scan error: {}", e), Instant::now()));
+                self.status_msg = Some((format!("Scan error: {}", e), Instant::now()));
             }
         }
     }
@@ -72,9 +71,11 @@ impl App {
     fn sort_entries(&mut self) {
         match self.sort_field {
             SortField::Port => self.entries.sort_by_key(|e| e.port),
-            SortField::ProcessName => self
-                .entries
-                .sort_by(|a, b| a.process_name.to_lowercase().cmp(&b.process_name.to_lowercase())),
+            SortField::ProcessName => self.entries.sort_by(|a, b| {
+                a.process_name
+                    .to_lowercase()
+                    .cmp(&b.process_name.to_lowercase())
+            }),
             SortField::Cpu => self
                 .entries
                 .sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap()),
@@ -106,12 +107,11 @@ impl App {
         // Keep selection in bounds
         if let Some(selected) = self.table_state.selected() {
             if selected >= self.filtered.len() {
-                self.table_state
-                    .select(if self.filtered.is_empty() {
-                        None
-                    } else {
-                        Some(self.filtered.len() - 1)
-                    });
+                self.table_state.select(if self.filtered.is_empty() {
+                    None
+                } else {
+                    Some(self.filtered.len() - 1)
+                });
             }
         } else if !self.filtered.is_empty() {
             self.table_state.select(Some(0));
@@ -261,8 +261,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                             app.refresh();
                         }
                         Err(e) => {
-                            app.status_msg =
-                                Some((format!("Kill failed: {}", e), Instant::now()));
+                            app.status_msg = Some((format!("Kill failed: {}", e), Instant::now()));
                         }
                     }
                 }
@@ -319,7 +318,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header + filter
-            Constraint::Min(5),   // table
+            Constraint::Min(5),    // table
             Constraint::Length(1), // status bar
         ])
         .split(size);
@@ -356,26 +355,33 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let filter_indicator = if app.filter_active { "▌" } else { "" };
 
     let header = Line::from(vec![
-        Span::styled("  Kaval", Style::default().fg(t.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "  Kaval",
+            Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" — Guard your ports  ", Style::default().fg(t.text_muted)),
         Span::styled("Filter: ", Style::default().fg(t.text_secondary)),
         Span::styled(
             format!("{}{}", &app.filter_text, filter_indicator),
-            Style::default().fg(if app.filter_active {
-                t.primary
-            } else {
-                t.text
-            }),
+            Style::default().fg(if app.filter_active { t.primary } else { t.text }),
         ),
         Span::styled("  ", Style::default()),
         Span::styled(
             format!("[{}]", tcp_label),
-            Style::default().fg(if app.show_tcp { t.success } else { t.text_muted }),
+            Style::default().fg(if app.show_tcp {
+                t.success
+            } else {
+                t.text_muted
+            }),
         ),
         Span::styled(" ", Style::default()),
         Span::styled(
             format!("[{}]", udp_label),
-            Style::default().fg(if app.show_udp { t.success } else { t.text_muted }),
+            Style::default().fg(if app.show_udp {
+                t.success
+            } else {
+                t.text_muted
+            }),
         ),
         Span::styled(
             format!("  {} ports", app.filtered.len()),
@@ -398,15 +404,17 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     let t = theme();
 
-    let header_cells = ["PORT", "PROTO", "PROCESS", "SERVICE", "PID", "CPU", "MEM", "UPTIME"]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(t.text_secondary)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+    let header_cells = [
+        "PORT", "PROTO", "PROCESS", "SERVICE", "PID", "CPU", "MEM", "UPTIME",
+    ]
+    .iter()
+    .map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(t.text_secondary)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
     let header = Row::new(header_cells).height(1);
 
     let rows: Vec<Row> = app
@@ -426,19 +434,13 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
 
             Row::new(vec![
                 Cell::from(e.port.to_string()).style(Style::default().fg(t.text)),
-                Cell::from(e.protocol.to_string())
-                    .style(Style::default().fg(t.text_secondary)),
-                Cell::from(e.process_name.clone())
-                    .style(Style::default().fg(cat_color)),
-                Cell::from(service_text)
-                    .style(Style::default().fg(cat_color)),
+                Cell::from(e.protocol.to_string()).style(Style::default().fg(t.text_secondary)),
+                Cell::from(e.process_name.clone()).style(Style::default().fg(cat_color)),
+                Cell::from(service_text).style(Style::default().fg(cat_color)),
                 Cell::from(e.pid.to_string()).style(Style::default().fg(t.text_muted)),
-                Cell::from(format!("{:.1}%", e.cpu_percent))
-                    .style(Style::default().fg(cpu_color)),
-                Cell::from(e.memory_display())
-                    .style(Style::default().fg(t.text)),
-                Cell::from(e.uptime_display())
-                    .style(Style::default().fg(t.text_muted)),
+                Cell::from(format!("{:.1}%", e.cpu_percent)).style(Style::default().fg(cpu_color)),
+                Cell::from(e.memory_display()).style(Style::default().fg(t.text)),
+                Cell::from(e.uptime_display()).style(Style::default().fg(t.text_muted)),
             ])
         })
         .collect();
@@ -522,7 +524,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(entry.uptime_display(), Style::default().fg(t.text)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("Command:", Style::default().fg(t.text_secondary))),
+            Line::from(Span::styled(
+                "Command:",
+                Style::default().fg(t.text_secondary),
+            )),
             Line::from(Span::styled(
                 &entry.process_cmd,
                 Style::default().fg(t.text_muted),
@@ -560,21 +565,45 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let shortcuts = Line::from(vec![
-        Span::styled(" ↑↓", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " ↑↓",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Nav  ", Style::default().fg(t.text_muted)),
-        Span::styled("/", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "/",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Filter  ", Style::default().fg(t.text_muted)),
-        Span::styled("x", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "x",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Kill  ", Style::default().fg(t.text_muted)),
-        Span::styled("d", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "d",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Detail  ", Style::default().fg(t.text_muted)),
-        Span::styled("s", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "s",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Sort  ", Style::default().fg(t.text_muted)),
-        Span::styled("t", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "t",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Proto  ", Style::default().fg(t.text_muted)),
-        Span::styled("r", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "r",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Refresh  ", Style::default().fg(t.text_muted)),
-        Span::styled("q", Style::default().fg(t.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Quit", Style::default().fg(t.text_muted)),
     ]);
 
@@ -597,7 +626,10 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry) {
     let text = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Kill ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  Kill ",
+                Style::default().fg(t.error).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("{}", entry.process_name),
                 Style::default().fg(t.text).add_modifier(Modifier::BOLD),

@@ -3,9 +3,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::Result;
-use netstat2::{
-    get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState,
-};
+use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use sysinfo::System;
 
 use crate::models::{PortEntry, Protocol};
@@ -41,9 +39,7 @@ pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
                 }
                 (Protocol::Tcp, tcp.local_addr, tcp.local_port, true)
             }
-            ProtocolSocketInfo::Udp(udp) => {
-                (Protocol::Udp, udp.local_addr, udp.local_port, true)
-            }
+            ProtocolSocketInfo::Udp(udp) => (Protocol::Udp, udp.local_addr, udp.local_port, true),
         };
 
         if !is_listening {
@@ -119,9 +115,6 @@ pub fn kill_process(pid: u32, force: bool) -> Result<()> {
     if proc.kill_with(signal).unwrap_or(false) {
         Ok(())
     } else {
-        anyhow::bail!(
-            "Failed to kill PID {}. Try running with sudo.",
-            pid,
-        )
+        anyhow::bail!("Failed to kill PID {}. Try running with sudo.", pid,)
     }
 }
