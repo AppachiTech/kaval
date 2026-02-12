@@ -631,7 +631,7 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry) {
                 Style::default().fg(t.error).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("{}", entry.process_name),
+                entry.process_name.to_string(),
                 Style::default().fg(t.text).add_modifier(Modifier::BOLD),
             ),
             Span::styled(

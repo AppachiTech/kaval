@@ -8,6 +8,8 @@ repository = "https://github.com/AppachiTech/kaval"
 homepage = "https://www.appachi.tech/kaval/"
 readme = "README.md"
 authors = ["Madhubalan Appachi <madhu@appachi.tech>"]
+keywords = ["port", "process", "tui", "cli", "network"]
+categories = ["command-line-utilities", "network-programming"]
 default-run = "kav"
 
 [[bin]]

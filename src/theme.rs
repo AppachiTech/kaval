@@ -2,6 +2,7 @@ use ratatui::style::Color;
 
 use crate::models::ServiceCategory;
 
+#[allow(dead_code)]
 pub struct Theme {
     pub primary: Color,
     pub primary_dim: Color,

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -76,7 +75,7 @@ pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
 
             entries.push(PortEntry {
                 protocol,
-                local_addr: IpAddr::from(local_addr),
+                local_addr,
                 port,
                 pid,
                 process_name,

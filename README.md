@@ -21,7 +21,7 @@ Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows all listening ports, map
 **Homebrew (recommended):**
 
 ```sh
-brew tap AppachiTech/kaval && brew install kaval
+brew update && brew tap AppachiTech/kaval && brew install kaval
 ```
 
 **Manual (macOS):**

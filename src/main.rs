@@ -246,9 +246,9 @@ fn print_table(entries: &[models::PortEntry]) {
     };
 
     // Header
-    let _ = write!(
+    let _ = writeln!(
         w,
-        "{}{}  {:<6} {:<5} {:<22} {:<20} {:<7} {:<7} {:<9} {}{}{}\n",
+        "{}{}  {:<6} {:<5} {:<22} {:<20} {:<7} {:<7} {:<9} UPTIME{}{}",
         SetForegroundColor(hdr),
         SetAttribute(Attribute::Bold),
         "PORT",
@@ -258,13 +258,12 @@ fn print_table(entries: &[models::PortEntry]) {
         "PID",
         "CPU",
         "MEM",
-        "UPTIME",
         SetAttribute(Attribute::Reset),
         ResetColor,
     );
-    let _ = write!(
+    let _ = writeln!(
         w,
-        "{}{}{}\n",
+        "{}{}{}",
         SetForegroundColor(divider),
         "─".repeat(100),
         ResetColor,
