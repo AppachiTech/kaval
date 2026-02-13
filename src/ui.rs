@@ -211,6 +211,87 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+key shortcuts (work in ALL modes: normal + filter)
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('c') | KeyCode::Char('q') => {
+                app.should_quit = true;
+                return;
+            }
+            KeyCode::Char('x') => {
+                // Kill with confirmation
+                if let Some(selected) = app.table_state.selected() {
+                    if selected < app.filtered.len() {
+                        app.confirm_kill = Some(selected);
+                    }
+                }
+                return;
+            }
+            KeyCode::Char('k') => {
+                // Force kill (SIGKILL), no confirmation
+                if let Some(selected) = app.table_state.selected() {
+                    if selected < app.filtered.len() {
+                        let entry = &app.entries[app.filtered[selected]];
+                        let pid = entry.pid;
+                        let name = entry.process_name.clone();
+                        let port = entry.port;
+                        match kill_process(pid, true) {
+                            Ok(()) => {
+                                app.status_msg = Some((
+                                    format!("Force killed {} (PID {}) on port {}", name, pid, port),
+                                    Instant::now(),
+                                ));
+                                app.refresh();
+                            }
+                            Err(e) => {
+                                app.status_msg =
+                                    Some((format!("Kill failed: {}", e), Instant::now()));
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            KeyCode::Char('d') => {
+                app.show_detail = !app.show_detail;
+                return;
+            }
+            KeyCode::Char('s') => {
+                app.sort_field = app.sort_field.next();
+                app.sort_entries();
+                app.apply_filter();
+                return;
+            }
+            KeyCode::Char('t') => {
+                // Cycle: TCP+UDP → TCP only → UDP only → TCP+UDP
+                match (app.show_tcp, app.show_udp) {
+                    (true, true) => {
+                        app.show_udp = false;
+                    }
+                    (true, false) => {
+                        app.show_tcp = false;
+                        app.show_udp = true;
+                    }
+                    (false, true) => {
+                        app.show_tcp = true;
+                    }
+                    (false, false) => {
+                        app.show_tcp = true;
+                        app.show_udp = true;
+                    }
+                }
+                app.refresh();
+                return;
+            }
+            KeyCode::Char('r') => {
+                app.refresh();
+                app.status_msg = Some(("Refreshed".to_string(), Instant::now()));
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // Filter input mode
     if app.filter_active {
         match key.code {
@@ -235,77 +316,11 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Normal mode
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.should_quit = true
-        }
+        KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::Char('/') => {
             app.filter_active = true;
-        }
-        KeyCode::Char('K') => {
-            // Force kill, no confirmation
-            if let Some(selected) = app.table_state.selected() {
-                if selected < app.filtered.len() {
-                    let entry = &app.entries[app.filtered[selected]];
-                    let pid = entry.pid;
-                    let name = entry.process_name.clone();
-                    let port = entry.port;
-                    match kill_process(pid, true) {
-                        Ok(()) => {
-                            app.status_msg = Some((
-                                format!("Force killed {} (PID {}) on port {}", name, pid, port),
-                                Instant::now(),
-                            ));
-                            app.refresh();
-                        }
-                        Err(e) => {
-                            app.status_msg = Some((format!("Kill failed: {}", e), Instant::now()));
-                        }
-                    }
-                }
-            }
-        }
-        KeyCode::Char('x') => {
-            // Kill with confirmation
-            if let Some(selected) = app.table_state.selected() {
-                if selected < app.filtered.len() {
-                    app.confirm_kill = Some(selected);
-                }
-            }
-        }
-        KeyCode::Char('d') => {
-            app.show_detail = !app.show_detail;
-        }
-        KeyCode::Char('t') => {
-            // Cycle: TCP+UDP → TCP only → UDP only → TCP+UDP
-            match (app.show_tcp, app.show_udp) {
-                (true, true) => {
-                    app.show_udp = false;
-                }
-                (true, false) => {
-                    app.show_tcp = false;
-                    app.show_udp = true;
-                }
-                (false, true) => {
-                    app.show_tcp = true;
-                }
-                (false, false) => {
-                    app.show_tcp = true;
-                    app.show_udp = true;
-                }
-            }
-            app.refresh();
-        }
-        KeyCode::Char('s') => {
-            app.sort_field = app.sort_field.next();
-            app.sort_entries();
-            app.apply_filter();
-        }
-        KeyCode::Char('r') => {
-            app.refresh();
-            app.status_msg = Some(("Refreshed".to_string(), Instant::now()));
         }
         _ => {}
     }
@@ -566,42 +581,42 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let shortcuts = Line::from(vec![
         Span::styled(
-            " ↑↓",
-            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" Nav  ", Style::default().fg(t.text_muted)),
-        Span::styled(
-            "/",
+            " /",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Filter  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "x",
+            "^X",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Kill  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "d",
+            "^K",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Force  ", Style::default().fg(t.text_muted)),
+        Span::styled(
+            "^D",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Detail  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "s",
+            "^S",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Sort  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "t",
+            "^T",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Proto  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "r",
+            "^R",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Refresh  ", Style::default().fg(t.text_muted)),
         Span::styled(
-            "q",
+            "^Q",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Quit", Style::default().fg(t.text_muted)),

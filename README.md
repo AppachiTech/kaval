@@ -70,13 +70,13 @@ kav kill 3000 -f     # Force kill (SIGKILL)
 |-----|--------|
 | `↑/↓` or `j/k` | Navigate |
 | `/` | Filter by port, name, or service |
-| `x` | Kill selected process (with confirmation) |
-| `K` | Force kill (SIGKILL, no confirmation) |
-| `d` | Toggle detail pane |
-| `s` | Cycle sort (Port → Name → CPU → Mem) |
-| `t` | Toggle TCP/UDP filter |
-| `r` | Force refresh |
-| `q` / `Esc` | Quit |
+| `Ctrl+X` | Kill selected process (with confirmation) |
+| `Ctrl+K` | Force kill (SIGKILL, no confirmation) |
+| `Ctrl+D` | Toggle detail pane |
+| `Ctrl+S` | Cycle sort (Port → Name → CPU → Mem) |
+| `Ctrl+T` | Toggle TCP/UDP filter |
+| `Ctrl+R` | Force refresh |
+| `Ctrl+Q` / `Esc` | Quit |
 
 ## Privacy
 
