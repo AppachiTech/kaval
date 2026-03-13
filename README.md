@@ -1,20 +1,28 @@
 # Kaval — Guard your ports.
 
 [![CI](https://github.com/AppachiTech/kaval/actions/workflows/ci.yml/badge.svg)](https://github.com/AppachiTech/kaval/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/kaval)](https://crates.io/crates/kaval)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Kaval** (காவல், Tamil for "Guard/Watch") is a developer-focused port and process manager TUI built in Rust.
 
 Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows all listening ports, maps them to processes, identifies known dev tools, and lets you kill with a keystroke.
 
+<p align="center">
+  <img src="demo/demo.gif" alt="Kaval demo" width="100%">
+</p>
+
 ## Features
 
 - **See everything at a glance** — all listening ports with process name, PID, CPU, memory, uptime
-- **Smart service detection** — recognizes Vite, Next.js, PostgreSQL, Redis, Django, Docker, Elasticsearch, and 40+ more
+- **Smart service detection** — recognizes Vite, Next.js, PostgreSQL, Redis, Django, Docker, Elasticsearch, and 56+ more
 - **Interactive TUI** — filter, sort, navigate, kill processes — all from one screen
 - **One-shot commands** — `kav list`, `kav check 3000`, `kav kill 3000` for scripting
 - **JSON output** — `kav list --json` for piping to other tools
+- **Sort by any column** — `kav list --sort cpu` to find what's eating resources
+- **Multi-port operations** — `kav check 3000 5432 8080` or `kav kill 3000 5432`
 - **Color-coded** — green for dev servers, yellow for databases, purple for caches
+- **Safe terminal handling** — panic hook ensures your terminal is never left broken
 
 ## Install
 
