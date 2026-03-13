@@ -669,3 +669,218 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry, force: bool) {
     let paragraph = Paragraph::new(text).block(block);
     f.render_widget(paragraph, dialog_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Protocol, ServiceCategory};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn make_entry(
+        port: u16,
+        name: &str,
+        service: Option<&'static str>,
+        category: ServiceCategory,
+        cpu: f32,
+        memory: f64,
+    ) -> PortEntry {
+        PortEntry {
+            protocol: Protocol::Tcp,
+            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port,
+            pid: port as u32,
+            process_name: name.to_string(),
+            process_cmd: String::new(),
+            cpu_percent: cpu,
+            memory_mb: memory,
+            uptime: Duration::from_secs(100),
+            known_service: service,
+            category,
+        }
+    }
+
+    fn app_with_entries(entries: Vec<PortEntry>) -> App {
+        let mut app = App::new();
+        app.entries = entries;
+        app.sort_entries();
+        app.apply_filter();
+        app
+    }
+
+    // --- Filter tests ---
+
+    #[test]
+    fn filter_empty_shows_all() {
+        let app = app_with_entries(vec![
+            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+        ]);
+        assert_eq!(app.filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_by_port_number() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+        ]);
+        app.filter_text = "5432".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].port, 5432);
+    }
+
+    #[test]
+    fn filter_by_partial_port() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(3001, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 200.0),
+        ]);
+        app.filter_text = "300".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_by_process_name_case_insensitive() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+        ]);
+        app.filter_text = "POST".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].process_name, "postgres");
+    }
+
+    #[test]
+    fn filter_by_service_name() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postmaster", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+        ]);
+        app.filter_text = "next".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].known_service, Some("Next.js"));
+    }
+
+    #[test]
+    fn filter_no_match() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+        ]);
+        app.filter_text = "zzzzz".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 0);
+    }
+
+    #[test]
+    fn filter_selection_stays_in_bounds() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 200.0),
+            make_entry(6379, "redis", None, ServiceCategory::Cache, 0.0, 50.0),
+        ]);
+        // Select last item
+        app.table_state.select(Some(2));
+        // Filter to 1 result — selection must clamp
+        app.filter_text = "node".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 1);
+        assert!(app.table_state.selected().unwrap() < app.filtered.len());
+    }
+
+    // --- Sort tests ---
+
+    #[test]
+    fn sort_by_port_ascending() {
+        let app = app_with_entries(vec![
+            make_entry(8080, "nginx", None, ServiceCategory::System, 0.0, 100.0),
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+        ]);
+        let ports: Vec<u16> = app.filtered.iter().map(|&i| app.entries[i].port).collect();
+        assert_eq!(ports, vec![3000, 5432, 8080]);
+    }
+
+    #[test]
+    fn sort_by_cpu_descending() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 10.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 80.0, 100.0),
+            make_entry(6379, "redis", None, ServiceCategory::Cache, 5.0, 100.0),
+        ]);
+        app.sort_field = SortField::Cpu;
+        app.sort_entries();
+        app.apply_filter();
+        let cpus: Vec<f32> = app.filtered.iter().map(|&i| app.entries[i].cpu_percent).collect();
+        assert_eq!(cpus, vec![80.0, 10.0, 5.0]);
+    }
+
+    #[test]
+    fn sort_by_memory_descending() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 500.0),
+            make_entry(6379, "redis", None, ServiceCategory::Cache, 0.0, 50.0),
+        ]);
+        app.sort_field = SortField::Memory;
+        app.sort_entries();
+        app.apply_filter();
+        let mems: Vec<f64> = app.filtered.iter().map(|&i| app.entries[i].memory_mb).collect();
+        assert_eq!(mems, vec![500.0, 100.0, 50.0]);
+    }
+
+    #[test]
+    fn sort_by_process_name_case_insensitive() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "Nginx", None, ServiceCategory::System, 0.0, 100.0),
+            make_entry(5432, "apache", None, ServiceCategory::System, 0.0, 100.0),
+            make_entry(6379, "Redis", None, ServiceCategory::Cache, 0.0, 100.0),
+        ]);
+        app.sort_field = SortField::ProcessName;
+        app.sort_entries();
+        app.apply_filter();
+        let names: Vec<&str> = app
+            .filtered
+            .iter()
+            .map(|&i| app.entries[i].process_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["apache", "Nginx", "Redis"]);
+    }
+
+    // --- Move selection ---
+
+    #[test]
+    fn move_selection_clamps_at_top() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+        ]);
+        app.table_state.select(Some(0));
+        app.move_selection(-1);
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn move_selection_clamps_at_bottom() {
+        let mut app = app_with_entries(vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+        ]);
+        app.table_state.select(Some(1));
+        app.move_selection(1);
+        assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn move_selection_empty_list() {
+        let mut app = app_with_entries(vec![]);
+        app.move_selection(1);
+        // Should not panic
+        assert_eq!(app.table_state.selected(), None);
+    }
+}

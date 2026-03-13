@@ -374,3 +374,45 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}…", truncated)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_string() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_exact_length() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_long_string() {
+        assert_eq!(truncate("hello world", 5), "hell…");
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn truncate_multibyte_utf8() {
+        // Japanese characters (3 bytes each) — must not panic
+        assert_eq!(truncate("日本語テスト", 4), "日本語…");
+    }
+
+    #[test]
+    fn truncate_emoji() {
+        // Emojis are multi-byte — must not panic
+        assert_eq!(truncate("🚀🔥💡🎯🎉", 3), "🚀🔥…");
+    }
+
+    #[test]
+    fn truncate_mixed_ascii_and_unicode() {
+        assert_eq!(truncate("café résumé", 6), "café …");
+    }
+}

@@ -115,3 +115,137 @@ impl SortField {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn make_entry(addr: IpAddr, port: u16, memory_mb: f64, uptime_secs: u64) -> PortEntry {
+        PortEntry {
+            protocol: Protocol::Tcp,
+            local_addr: addr,
+            port,
+            pid: 1234,
+            process_name: "test".to_string(),
+            process_cmd: String::new(),
+            cpu_percent: 0.0,
+            memory_mb,
+            uptime: Duration::from_secs(uptime_secs),
+            known_service: None,
+            category: ServiceCategory::Unknown,
+        }
+    }
+
+    // --- Protocol Display ---
+
+    #[test]
+    fn protocol_display() {
+        assert_eq!(Protocol::Tcp.to_string(), "TCP");
+        assert_eq!(Protocol::Udp.to_string(), "UDP");
+    }
+
+    // --- format_memory ---
+
+    #[test]
+    fn format_memory_mb() {
+        assert_eq!(format_memory(512.0), "512 MB");
+        assert_eq!(format_memory(0.0), "0 MB");
+        assert_eq!(format_memory(1023.9), "1024 MB");
+    }
+
+    #[test]
+    fn format_memory_gb() {
+        assert_eq!(format_memory(1024.0), "1.0 GB");
+        assert_eq!(format_memory(2048.0), "2.0 GB");
+        assert_eq!(format_memory(1536.0), "1.5 GB");
+    }
+
+    // --- format_uptime ---
+
+    #[test]
+    fn format_uptime_seconds() {
+        assert_eq!(format_uptime(Duration::from_secs(0)), "0s");
+        assert_eq!(format_uptime(Duration::from_secs(30)), "30s");
+        assert_eq!(format_uptime(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn format_uptime_minutes() {
+        assert_eq!(format_uptime(Duration::from_secs(60)), "1m");
+        assert_eq!(format_uptime(Duration::from_secs(3599)), "59m");
+    }
+
+    #[test]
+    fn format_uptime_hours() {
+        assert_eq!(format_uptime(Duration::from_secs(3600)), "1h 0m");
+        assert_eq!(format_uptime(Duration::from_secs(7260)), "2h 1m");
+        assert_eq!(format_uptime(Duration::from_secs(86399)), "23h 59m");
+    }
+
+    #[test]
+    fn format_uptime_days() {
+        assert_eq!(format_uptime(Duration::from_secs(86400)), "1d 0h");
+        assert_eq!(format_uptime(Duration::from_secs(90000)), "1d 1h");
+    }
+
+    // --- addr_display ---
+
+    #[test]
+    fn addr_display_ipv4_unspecified() {
+        let entry = make_entry(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 3000, 0.0, 0);
+        assert_eq!(entry.addr_display(), "*:3000");
+    }
+
+    #[test]
+    fn addr_display_ipv6_unspecified() {
+        let entry = make_entry(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8080, 0.0, 0);
+        assert_eq!(entry.addr_display(), "*:8080");
+    }
+
+    #[test]
+    fn addr_display_ipv4_loopback() {
+        let entry = make_entry(IpAddr::V4(Ipv4Addr::LOCALHOST), 5432, 0.0, 0);
+        assert_eq!(entry.addr_display(), "127…:5432");
+    }
+
+    #[test]
+    fn addr_display_specific_addr() {
+        let addr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        let entry = make_entry(addr, 9000, 0.0, 0);
+        assert_eq!(entry.addr_display(), "192.168.1.100:9000");
+    }
+
+    // --- memory_display / uptime_display delegate correctly ---
+
+    #[test]
+    fn memory_display_delegates() {
+        let entry = make_entry(IpAddr::V4(Ipv4Addr::LOCALHOST), 80, 2048.0, 0);
+        assert_eq!(entry.memory_display(), "2.0 GB");
+    }
+
+    #[test]
+    fn uptime_display_delegates() {
+        let entry = make_entry(IpAddr::V4(Ipv4Addr::LOCALHOST), 80, 0.0, 3661);
+        assert_eq!(entry.uptime_display(), "1h 1m");
+    }
+
+    // --- SortField ---
+
+    #[test]
+    fn sort_field_cycles() {
+        let field = SortField::Port;
+        assert_eq!(field.next(), SortField::ProcessName);
+        assert_eq!(field.next().next(), SortField::Cpu);
+        assert_eq!(field.next().next().next(), SortField::Memory);
+        assert_eq!(field.next().next().next().next(), SortField::Port);
+    }
+
+    #[test]
+    fn sort_field_labels() {
+        assert_eq!(SortField::Port.label(), "Port");
+        assert_eq!(SortField::ProcessName.label(), "Name");
+        assert_eq!(SortField::Cpu.label(), "CPU");
+        assert_eq!(SortField::Memory.label(), "Mem");
+    }
+}
