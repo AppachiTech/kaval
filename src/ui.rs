@@ -16,7 +16,9 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::models::{PortEntry, SortField};
+use std::collections::HashMap;
+
+use crate::models::{PortEntry, ServiceCategory, SortField};
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
 
@@ -24,7 +26,8 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 struct App {
     entries: Vec<PortEntry>,
-    filtered: Vec<usize>, // indices into entries
+    filtered: Vec<usize>,                   // indices into entries
+    browser_counts: HashMap<(u32, String), usize>, // (pid, service) -> port count
     table_state: TableState,
     filter_text: String,
     filter_active: bool,
@@ -42,6 +45,7 @@ impl App {
         Self {
             entries: Vec::new(),
             filtered: Vec::new(),
+            browser_counts: HashMap::new(),
             table_state: TableState::default(),
             filter_text: String::new(),
             filter_active: false,
@@ -91,19 +95,51 @@ impl App {
 
     fn apply_filter(&mut self) {
         let query = self.filter_text.to_lowercase();
+
+        // Count browser entries per (pid, service) for grouping
+        self.browser_counts.clear();
+        for e in &self.entries {
+            if e.category == ServiceCategory::Browser {
+                if let Some(svc) = e.known_service {
+                    *self
+                        .browser_counts
+                        .entry((e.pid, svc.to_string()))
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Track which browser (pid, service) groups we've already included
+        let mut browser_seen: HashMap<(u32, String), bool> = HashMap::new();
+
         self.filtered = self
             .entries
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                if query.is_empty() {
-                    return true;
-                }
-                e.port.to_string().contains(&query)
-                    || e.process_name.to_lowercase().contains(&query)
-                    || e.known_service
+                if !query.is_empty()
+                    && !e.port.to_string().contains(&query)
+                    && !e.process_name.to_lowercase().contains(&query)
+                    && !e
+                        .known_service
                         .map(|s| s.to_lowercase().contains(&query))
                         .unwrap_or(false)
+                {
+                    return false;
+                }
+
+                // Deduplicate browser entries: keep only first per (pid, service)
+                if e.category == ServiceCategory::Browser {
+                    if let Some(svc) = e.known_service {
+                        let key = (e.pid, svc.to_string());
+                        if browser_seen.contains_key(&key) {
+                            return false;
+                        }
+                        browser_seen.insert(key, true);
+                    }
+                }
+
+                true
             })
             .map(|(i, _)| i)
             .collect();
@@ -431,7 +467,6 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|&idx| {
             let e = &app.entries[idx];
-            let service_text = e.known_service.unwrap_or("—");
             let cat_color = t.category_color(e.category);
             let cpu_color = if e.cpu_percent > 50.0 {
                 t.error
@@ -441,8 +476,29 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 t.text
             };
 
+            // For grouped browser entries, look up how many ports this (pid, service) has
+            let browser_count = if e.category == ServiceCategory::Browser {
+                e.known_service
+                    .and_then(|svc| app.browser_counts.get(&(e.pid, svc.to_string())).copied())
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+
+            let service_text = match e.known_service {
+                Some(svc) if browser_count > 1 => format!("{} ×{}", svc, browser_count),
+                Some(svc) => svc.to_string(),
+                None => "—".to_string(),
+            };
+
+            let port_text = if browser_count > 1 {
+                "···".to_string()
+            } else {
+                e.port.to_string()
+            };
+
             Row::new(vec![
-                Cell::from(e.port.to_string()).style(Style::default().fg(t.text)),
+                Cell::from(port_text).style(Style::default().fg(t.text)),
                 Cell::from(e.protocol.to_string()).style(Style::default().fg(t.text_secondary)),
                 Cell::from(e.process_name.clone()).style(Style::default().fg(cat_color)),
                 Cell::from(service_text).style(Style::default().fg(cat_color)),
@@ -882,5 +938,74 @@ mod tests {
         app.move_selection(1);
         // Should not panic
         assert_eq!(app.table_state.selected(), None);
+    }
+
+    // --- Browser grouping tests ---
+
+    fn make_browser_entry(port: u16, pid: u32, service: &'static str) -> PortEntry {
+        PortEntry {
+            protocol: Protocol::Tcp,
+            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port,
+            pid,
+            process_name: "Google Chrome Helper".to_string(),
+            process_cmd: String::new(),
+            cpu_percent: 1.0,
+            memory_mb: 50.0,
+            uptime: Duration::from_secs(100),
+            known_service: Some(service),
+            category: ServiceCategory::Browser,
+        }
+    }
+
+    #[test]
+    fn browser_entries_grouped_by_pid_and_service() {
+        let app = app_with_entries(vec![
+            make_browser_entry(5000, 100, "Chrome"),
+            make_browser_entry(5001, 100, "Chrome"),
+            make_browser_entry(5002, 100, "Chrome"),
+            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
+        ]);
+        // 3 Chrome entries collapsed to 1, plus 1 node entry = 2
+        assert_eq!(app.filtered.len(), 2);
+        // The browser group count should be 3
+        assert_eq!(
+            app.browser_counts.get(&(100, "Chrome".to_string())),
+            Some(&3)
+        );
+    }
+
+    #[test]
+    fn different_browser_pids_not_grouped() {
+        let app = app_with_entries(vec![
+            make_browser_entry(5000, 100, "Chrome"),
+            make_browser_entry(5001, 200, "Chrome"),
+        ]);
+        // Different PIDs — should be 2 separate entries
+        assert_eq!(app.filtered.len(), 2);
+    }
+
+    #[test]
+    fn different_browser_services_not_grouped() {
+        let app = app_with_entries(vec![
+            make_browser_entry(5000, 100, "Chrome"),
+            make_browser_entry(5001, 100, "Brave"),
+        ]);
+        // Different services — should be 2 separate entries
+        assert_eq!(app.filtered.len(), 2);
+    }
+
+    #[test]
+    fn single_browser_entry_not_grouped() {
+        let app = app_with_entries(vec![
+            make_browser_entry(5000, 100, "Chrome"),
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+        ]);
+        // Only 1 Chrome entry — no grouping, count is 1
+        assert_eq!(app.filtered.len(), 2);
+        assert_eq!(
+            app.browser_counts.get(&(100, "Chrome".to_string())),
+            Some(&1)
+        );
     }
 }

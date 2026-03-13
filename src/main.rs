@@ -40,6 +40,7 @@ fn main() -> Result<()> {
             let matches: Vec<_> = entries.iter().filter(|e| e.port == port).collect();
             if matches.is_empty() {
                 println!("Nothing listening on port {}", port);
+                std::process::exit(1);
             } else {
                 for entry in &matches {
                     println!(
