@@ -43,6 +43,29 @@ pub struct PortEntry {
     pub category: ServiceCategory,
 }
 
+/// Format memory (in MB) as human-readable string
+pub fn format_memory(memory_mb: f64) -> String {
+    if memory_mb >= 1024.0 {
+        format!("{:.1} GB", memory_mb / 1024.0)
+    } else {
+        format!("{:.0} MB", memory_mb)
+    }
+}
+
+/// Format uptime duration as human-readable string
+pub fn format_uptime(uptime: Duration) -> String {
+    let secs = uptime.as_secs();
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+    } else {
+        format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
+    }
+}
+
 impl PortEntry {
     /// Display address as compact string
     pub fn addr_display(&self) -> String {
@@ -56,25 +79,12 @@ impl PortEntry {
 
     /// Format memory as human-readable string
     pub fn memory_display(&self) -> String {
-        if self.memory_mb >= 1024.0 {
-            format!("{:.1} GB", self.memory_mb / 1024.0)
-        } else {
-            format!("{:.0} MB", self.memory_mb)
-        }
+        format_memory(self.memory_mb)
     }
 
     /// Format uptime as human-readable string
     pub fn uptime_display(&self) -> String {
-        let secs = self.uptime.as_secs();
-        if secs < 60 {
-            format!("{}s", secs)
-        } else if secs < 3600 {
-            format!("{}m", secs / 60)
-        } else if secs < 86400 {
-            format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-        } else {
-            format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
-        }
+        format_uptime(self.uptime)
     }
 }
 

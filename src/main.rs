@@ -10,10 +10,12 @@ use std::io::{self, Write};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
+use models::{format_memory, format_uptime};
 
 use cli::{Cli, Command};
 use models::ServiceCategory;
 use scanner::{kill_process, scan_ports};
+use theme::theme;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -92,61 +94,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn category_color(cat: ServiceCategory) -> Color {
-    match cat {
-        ServiceCategory::DevServer => Color::Rgb {
-            r: 34,
-            g: 197,
-            b: 94,
-        }, // green
-        ServiceCategory::Database => Color::Rgb {
-            r: 234,
-            g: 179,
-            b: 8,
-        }, // yellow
-        ServiceCategory::Cache => Color::Rgb {
-            r: 168,
-            g: 85,
-            b: 247,
-        }, // purple
-        ServiceCategory::Container => Color::Rgb {
-            r: 96,
-            g: 165,
-            b: 250,
-        }, // blue
-        ServiceCategory::Browser => Color::Rgb {
-            r: 251,
-            g: 146,
-            b: 60,
-        }, // orange
-        ServiceCategory::System => Color::Rgb {
-            r: 140,
-            g: 140,
-            b: 145,
-        }, // gray
-        ServiceCategory::Unknown => Color::Rgb {
-            r: 100,
-            g: 100,
-            b: 105,
-        }, // dim gray
-    }
-}
-
-fn proto_color(proto: models::Protocol) -> Color {
-    match proto {
-        models::Protocol::Tcp => Color::Rgb {
-            r: 6,
-            g: 182,
-            b: 212,
-        }, // cyan
-        models::Protocol::Udp => Color::Rgb {
-            r: 100,
-            g: 100,
-            b: 105,
-        }, // dim
-    }
-}
-
 /// Grouped browser entry for display
 struct BrowserGroup {
     service: &'static str,
@@ -221,29 +168,16 @@ fn print_table(entries: &[models::PortEntry]) {
     });
     rows.extend(grouped);
 
+    let t = theme();
     let out = io::stdout();
     let mut w = out.lock();
 
-    let hdr = Color::Rgb {
-        r: 120,
-        g: 120,
-        b: 125,
-    };
-    let dim = Color::Rgb {
-        r: 100,
-        g: 100,
-        b: 105,
-    };
-    let divider = Color::Rgb {
-        r: 60,
-        g: 60,
-        b: 65,
-    };
-    let light = Color::Rgb {
-        r: 160,
-        g: 160,
-        b: 165,
-    };
+    let hdr = t.ct(t.text_secondary);
+    let dim = t.ct(t.text_muted);
+    let divider = t.ct(t.border);
+    let light = t.ct(t.text_secondary);
+    let error = t.ct(t.error);
+    let warning = t.ct(t.warning);
 
     // Header
     let _ = writeln!(
@@ -272,7 +206,7 @@ fn print_table(entries: &[models::PortEntry]) {
     for row in &rows {
         match row {
             DisplayRow::Single(e) => {
-                let cat_col = category_color(e.category);
+                let cat_col = t.category_ct_color(e.category);
                 let port_col = if e.known_service.is_some() {
                     Color::White
                 } else {
@@ -290,7 +224,7 @@ fn print_table(entries: &[models::PortEntry]) {
                 let _ = write!(
                     w,
                     "{} {:<5}",
-                    SetForegroundColor(proto_color(e.protocol)),
+                    SetForegroundColor(t.proto_ct_color(e.protocol)),
                     e.protocol
                 );
                 let _ = write!(
@@ -317,17 +251,9 @@ fn print_table(entries: &[models::PortEntry]) {
                 let _ = write!(w, "{} {:<7}", SetForegroundColor(dim), e.pid);
                 let cpu_str = format!("{:.1}%", e.cpu_percent);
                 let cpu_col = if e.cpu_percent > 50.0 {
-                    Color::Rgb {
-                        r: 239,
-                        g: 68,
-                        b: 68,
-                    }
+                    error
                 } else if e.cpu_percent > 10.0 {
-                    Color::Rgb {
-                        r: 234,
-                        g: 179,
-                        b: 8,
-                    }
+                    warning
                 } else {
                     dim
                 };
@@ -337,7 +263,7 @@ fn print_table(entries: &[models::PortEntry]) {
                 let _ = writeln!(w, "{}", ResetColor);
             }
             DisplayRow::Grouped(g) => {
-                let cat_col = category_color(g.category);
+                let cat_col = t.category_ct_color(g.category);
                 let svc_label = format!("{} ×{}", g.service, g.count);
 
                 let _ = write!(
@@ -351,7 +277,7 @@ fn print_table(entries: &[models::PortEntry]) {
                 let _ = write!(
                     w,
                     "{} {:<5}",
-                    SetForegroundColor(proto_color(g.protocol)),
+                    SetForegroundColor(t.proto_ct_color(g.protocol)),
                     g.protocol
                 );
                 let _ = write!(
@@ -379,24 +305,14 @@ fn print_table(entries: &[models::PortEntry]) {
                     w,
                     "{} {:<9}",
                     SetForegroundColor(light),
-                    if g.memory_mb >= 1024.0 {
-                        format!("{:.1} GB", g.memory_mb / 1024.0)
-                    } else {
-                        format!("{:.0} MB", g.memory_mb)
-                    }
+                    format_memory(g.memory_mb)
                 );
-                let _ = write!(w, "{} {}", SetForegroundColor(dim), {
-                    let secs = g.uptime.as_secs();
-                    if secs < 60 {
-                        format!("{}s", secs)
-                    } else if secs < 3600 {
-                        format!("{}m", secs / 60)
-                    } else if secs < 86400 {
-                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-                    } else {
-                        format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
-                    }
-                });
+                let _ = write!(
+                    w,
+                    "{} {}",
+                    SetForegroundColor(dim),
+                    format_uptime(g.uptime)
+                );
                 let _ = writeln!(w, "{}", ResetColor);
             }
         }

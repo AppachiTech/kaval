@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -28,30 +28,25 @@ pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
 
     // Collect PIDs we care about, then look them up
     let mut entries: Vec<PortEntry> = Vec::new();
-    let mut seen: HashMap<(u16, u32), bool> = HashMap::new();
+    let mut seen: HashSet<(u16, u32)> = HashSet::new();
 
     for socket in &sockets {
-        let (protocol, local_addr, port, is_listening) = match &socket.protocol_socket_info {
+        let (protocol, local_addr, port) = match &socket.protocol_socket_info {
             ProtocolSocketInfo::Tcp(tcp) => {
                 if tcp.state != TcpState::Listen {
                     continue;
                 }
-                (Protocol::Tcp, tcp.local_addr, tcp.local_port, true)
+                (Protocol::Tcp, tcp.local_addr, tcp.local_port)
             }
-            ProtocolSocketInfo::Udp(udp) => (Protocol::Udp, udp.local_addr, udp.local_port, true),
+            ProtocolSocketInfo::Udp(udp) => (Protocol::Udp, udp.local_addr, udp.local_port),
         };
-
-        if !is_listening {
-            continue;
-        }
 
         // Get associated PIDs
         for &pid in &socket.associated_pids {
             // Deduplicate by (port, pid)
-            if seen.contains_key(&(port, pid)) {
+            if !seen.insert((port, pid)) {
                 continue;
             }
-            seen.insert((port, pid), true);
 
             let pid_obj = sysinfo::Pid::from_u32(pid);
             let (process_name, process_cmd, cpu_percent, memory_mb, uptime) =

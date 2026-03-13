@@ -1,6 +1,7 @@
+use crossterm::style::Color as CtColor;
 use ratatui::style::Color;
 
-use crate::models::ServiceCategory;
+use crate::models::{Protocol, ServiceCategory};
 
 #[allow(dead_code)]
 pub struct Theme {
@@ -53,6 +54,15 @@ impl Default for Theme {
     }
 }
 
+/// Convert a ratatui Color::Rgb to crossterm Color::Rgb
+fn to_ct(color: Color) -> CtColor {
+    match color {
+        Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
+        Color::White => CtColor::White,
+        _ => CtColor::Reset,
+    }
+}
+
 impl Theme {
     pub fn category_color(&self, category: ServiceCategory) -> Color {
         match category {
@@ -64,6 +74,24 @@ impl Theme {
             ServiceCategory::System => self.system,
             ServiceCategory::Unknown => self.text,
         }
+    }
+
+    /// Category color as crossterm Color (for non-TUI output)
+    pub fn category_ct_color(&self, category: ServiceCategory) -> CtColor {
+        to_ct(self.category_color(category))
+    }
+
+    /// Protocol color as crossterm Color (for non-TUI output)
+    pub fn proto_ct_color(&self, protocol: Protocol) -> CtColor {
+        match protocol {
+            Protocol::Tcp => to_ct(self.info), // cyan/blue
+            Protocol::Udp => to_ct(self.text_muted),
+        }
+    }
+
+    /// Get a crossterm Color from a theme field
+    pub fn ct(&self, color: Color) -> CtColor {
+        to_ct(color)
     }
 }
 
