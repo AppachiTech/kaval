@@ -2,6 +2,8 @@ use std::fmt;
 use std::net::IpAddr;
 use std::time::Duration;
 
+use clap::ValueEnum;
+
 /// CPU% thresholds shared between CLI output and TUI rendering
 pub const CPU_WARN_THRESHOLD: f32 = 20.0;
 pub const CPU_ERROR_THRESHOLD: f32 = 50.0;
@@ -92,11 +94,19 @@ impl PortEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SortField {
+    /// Sort by port number (default)
+    #[value(name = "port")]
     Port,
+    /// Sort by process name
+    #[value(name = "name")]
     ProcessName,
+    /// Sort by CPU usage (descending)
+    #[value(name = "cpu")]
     Cpu,
+    /// Sort by memory usage (descending)
+    #[value(name = "mem")]
     Memory,
 }
 
@@ -117,6 +127,29 @@ impl SortField {
             SortField::Cpu => "CPU",
             SortField::Memory => "Mem",
         }
+    }
+}
+
+/// Sort a slice of PortEntry in-place by the given field.
+/// Shared by CLI (main.rs) and TUI (ui.rs) to avoid duplication.
+pub fn sort_entries(entries: &mut [PortEntry], field: SortField) {
+    match field {
+        SortField::Port => entries.sort_by_key(|e| e.port),
+        SortField::ProcessName => entries.sort_by(|a, b| {
+            a.process_name
+                .to_lowercase()
+                .cmp(&b.process_name.to_lowercase())
+        }),
+        SortField::Cpu => entries.sort_by(|a, b| {
+            b.cpu_percent
+                .partial_cmp(&a.cpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        SortField::Memory => entries.sort_by(|a, b| {
+            b.memory_mb
+                .partial_cmp(&a.memory_mb)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
     }
 }
 

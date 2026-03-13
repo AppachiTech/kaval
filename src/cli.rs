@@ -1,4 +1,7 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
+
+pub use crate::models::SortField;
 
 #[derive(Parser)]
 #[command(
@@ -22,7 +25,7 @@ pub enum Command {
 
         /// Sort output (port, name, cpu, mem)
         #[arg(long, value_enum)]
-        sort: Option<SortBy>,
+        sort: Option<SortField>,
     },
 
     /// Check what's running on specific port(s)
@@ -42,12 +45,16 @@ pub enum Command {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Print shell completion script for the given shell
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum SortBy {
-    Port,
-    Name,
-    Cpu,
-    Mem,
+/// Generate and print shell completions to stdout.
+pub fn print_completions(shell: Shell) {
+    generate(shell, &mut Cli::command(), "kav", &mut std::io::stdout());
 }

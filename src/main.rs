@@ -11,29 +11,9 @@ use std::io::{self, IsTerminal};
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, SortBy};
+use cli::{Cli, Command};
+use models::{sort_entries, SortField};
 use scanner::{kill_process, new_system_with_cpu, scan_ports};
-
-fn sort_entries(entries: &mut [models::PortEntry], sort: Option<SortBy>) {
-    match sort {
-        None | Some(SortBy::Port) => entries.sort_by_key(|e| e.port),
-        Some(SortBy::Name) => entries.sort_by(|a, b| {
-            a.process_name
-                .to_lowercase()
-                .cmp(&b.process_name.to_lowercase())
-        }),
-        Some(SortBy::Cpu) => entries.sort_by(|a, b| {
-            b.cpu_percent
-                .partial_cmp(&a.cpu_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-        Some(SortBy::Mem) => entries.sort_by(|a, b| {
-            b.memory_mb
-                .partial_cmp(&a.memory_mb)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-    }
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -47,7 +27,7 @@ fn main() -> Result<()> {
         Some(Command::List { json, sort }) => {
             let mut sys = new_system_with_cpu();
             let mut entries = scan_ports(&mut sys, true, true)?;
-            sort_entries(&mut entries, sort);
+            sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
             if json {
                 output::print_json(&entries)?;
             } else {
@@ -73,14 +53,9 @@ fn main() -> Result<()> {
             for port in &missing {
                 println!("Nothing listening on port {}", port);
             }
-            // Summary when checking multiple ports
             if ports.len() > 1 {
                 let active = ports.len() - missing.len();
-                println!(
-                    "\n{} of {} ports active",
-                    active,
-                    ports.len()
-                );
+                println!("\n{} of {} ports active", active, ports.len());
             }
             if matches.is_empty() {
                 std::process::exit(1);
@@ -99,7 +74,6 @@ fn main() -> Result<()> {
                 } else {
                     any_found = true;
                     for entry in &matches {
-                        // Skip if we already killed this PID (same process on multiple ports)
                         if !killed_pids.insert(entry.pid) {
                             continue;
                         }
@@ -122,6 +96,10 @@ fn main() -> Result<()> {
             if !any_found {
                 std::process::exit(1);
             }
+        }
+
+        Some(Command::Completions { shell }) => {
+            cli::print_completions(shell);
         }
     }
 

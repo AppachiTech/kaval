@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use sysinfo::System;
 
-use crate::models::{PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
+use crate::models::{sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
 
@@ -82,24 +82,7 @@ impl App {
     }
 
     fn sort_entries(&mut self) {
-        match self.sort_field {
-            SortField::Port => self.entries.sort_by_key(|e| e.port),
-            SortField::ProcessName => self.entries.sort_by(|a, b| {
-                a.process_name
-                    .to_lowercase()
-                    .cmp(&b.process_name.to_lowercase())
-            }),
-            SortField::Cpu => self.entries.sort_by(|a, b| {
-                b.cpu_percent
-                    .partial_cmp(&a.cpu_percent)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-            SortField::Memory => self.entries.sort_by(|a, b| {
-                b.memory_mb
-                    .partial_cmp(&a.memory_mb)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+        sort_entries(&mut self.entries, self.sort_field);
     }
 
     fn apply_filter(&mut self) {
