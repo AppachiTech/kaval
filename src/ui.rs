@@ -20,7 +20,9 @@ use std::collections::{HashMap, HashSet};
 
 use sysinfo::System;
 
-use crate::models::{sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
+use crate::models::{
+    sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
+};
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
 
@@ -29,7 +31,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 struct App {
     sys: System,
     entries: Vec<PortEntry>,
-    filtered: Vec<usize>,                   // indices into entries
+    filtered: Vec<usize>,                          // indices into entries
     browser_counts: HashMap<(u32, String), usize>, // (pid, service) -> port count
     table_state: TableState,
     filter_text: String,
@@ -355,6 +357,18 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::PageDown | KeyCode::Right => {
             app.detail_scroll = app.detail_scroll.saturating_add(3);
+        }
+        KeyCode::Home => {
+            if !app.filtered.is_empty() {
+                app.detail_scroll = 0;
+                app.table_state.select(Some(0));
+            }
+        }
+        KeyCode::End => {
+            if !app.filtered.is_empty() {
+                app.detail_scroll = 0;
+                app.table_state.select(Some(app.filtered.len() - 1));
+            }
         }
         KeyCode::Char('/') => {
             app.filter_active = true;
@@ -782,8 +796,22 @@ mod tests {
     #[test]
     fn filter_empty_shows_all() {
         let app = app_with_entries(vec![
-            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                3000,
+                "node",
+                Some("Next.js"),
+                ServiceCategory::DevServer,
+                0.0,
+                100.0,
+            ),
+            make_entry(
+                5432,
+                "postgres",
+                Some("PostgreSQL"),
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
         ]);
         assert_eq!(app.filtered.len(), 2);
     }
@@ -791,8 +819,22 @@ mod tests {
     #[test]
     fn filter_by_port_number() {
         let mut app = app_with_entries(vec![
-            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                3000,
+                "node",
+                Some("Next.js"),
+                ServiceCategory::DevServer,
+                0.0,
+                100.0,
+            ),
+            make_entry(
+                5432,
+                "postgres",
+                Some("PostgreSQL"),
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
         ]);
         app.filter_text = "5432".to_string();
         app.apply_filter();
@@ -805,7 +847,14 @@ mod tests {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
             make_entry(3001, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
         ]);
         app.filter_text = "300".to_string();
         app.apply_filter();
@@ -816,7 +865,14 @@ mod tests {
     fn filter_by_process_name_case_insensitive() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                5432,
+                "postgres",
+                Some("PostgreSQL"),
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
         ]);
         app.filter_text = "POST".to_string();
         app.apply_filter();
@@ -827,8 +883,22 @@ mod tests {
     #[test]
     fn filter_by_service_name() {
         let mut app = app_with_entries(vec![
-            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postmaster", Some("PostgreSQL"), ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                3000,
+                "node",
+                Some("Next.js"),
+                ServiceCategory::DevServer,
+                0.0,
+                100.0,
+            ),
+            make_entry(
+                5432,
+                "postmaster",
+                Some("PostgreSQL"),
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
         ]);
         app.filter_text = "next".to_string();
         app.apply_filter();
@@ -838,9 +908,14 @@ mod tests {
 
     #[test]
     fn filter_no_match() {
-        let mut app = app_with_entries(vec![
-            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-        ]);
+        let mut app = app_with_entries(vec![make_entry(
+            3000,
+            "node",
+            None,
+            ServiceCategory::DevServer,
+            0.0,
+            100.0,
+        )]);
         app.filter_text = "zzzzz".to_string();
         app.apply_filter();
         assert_eq!(app.filtered.len(), 0);
@@ -850,7 +925,14 @@ mod tests {
     fn filter_selection_stays_in_bounds() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 200.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
             make_entry(6379, "redis", None, ServiceCategory::Cache, 0.0, 50.0),
         ]);
         // Select last item
@@ -869,7 +951,14 @@ mod tests {
         let app = app_with_entries(vec![
             make_entry(8080, "nginx", None, ServiceCategory::System, 0.0, 100.0),
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                100.0,
+            ),
         ]);
         let ports: Vec<u16> = app.filtered.iter().map(|&i| app.entries[i].port).collect();
         assert_eq!(ports, vec![3000, 5432, 8080]);
@@ -879,13 +968,24 @@ mod tests {
     fn sort_by_cpu_descending() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 10.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 80.0, 100.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                80.0,
+                100.0,
+            ),
             make_entry(6379, "redis", None, ServiceCategory::Cache, 5.0, 100.0),
         ]);
         app.sort_field = SortField::Cpu;
         app.sort_entries();
         app.apply_filter();
-        let cpus: Vec<f32> = app.filtered.iter().map(|&i| app.entries[i].cpu_percent).collect();
+        let cpus: Vec<f32> = app
+            .filtered
+            .iter()
+            .map(|&i| app.entries[i].cpu_percent)
+            .collect();
         assert_eq!(cpus, vec![80.0, 10.0, 5.0]);
     }
 
@@ -893,13 +993,24 @@ mod tests {
     fn sort_by_memory_descending() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 500.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                500.0,
+            ),
             make_entry(6379, "redis", None, ServiceCategory::Cache, 0.0, 50.0),
         ]);
         app.sort_field = SortField::Memory;
         app.sort_entries();
         app.apply_filter();
-        let mems: Vec<f64> = app.filtered.iter().map(|&i| app.entries[i].memory_mb).collect();
+        let mems: Vec<f64> = app
+            .filtered
+            .iter()
+            .map(|&i| app.entries[i].memory_mb)
+            .collect();
         assert_eq!(mems, vec![500.0, 100.0, 50.0]);
     }
 
@@ -927,7 +1038,14 @@ mod tests {
     fn move_selection_clamps_at_top() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                100.0,
+            ),
         ]);
         app.table_state.select(Some(0));
         app.move_selection(-1);
@@ -938,7 +1056,14 @@ mod tests {
     fn move_selection_clamps_at_bottom() {
         let mut app = app_with_entries(vec![
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 100.0),
+            make_entry(
+                5432,
+                "postgres",
+                None,
+                ServiceCategory::Database,
+                0.0,
+                100.0,
+            ),
         ]);
         app.table_state.select(Some(1));
         app.move_selection(1);
@@ -977,7 +1102,14 @@ mod tests {
             make_browser_entry(5000, 100, "Chrome"),
             make_browser_entry(5001, 100, "Chrome"),
             make_browser_entry(5002, 100, "Chrome"),
-            make_entry(3000, "node", Some("Next.js"), ServiceCategory::DevServer, 0.0, 100.0),
+            make_entry(
+                3000,
+                "node",
+                Some("Next.js"),
+                ServiceCategory::DevServer,
+                0.0,
+                100.0,
+            ),
         ]);
         // 3 Chrome entries collapsed to 1, plus 1 node entry = 2
         assert_eq!(app.filtered.len(), 2);

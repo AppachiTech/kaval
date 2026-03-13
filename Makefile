@@ -1,4 +1,4 @@
-.PHONY: dev test lint install uninstall help current-version release-patch release-minor release-major check-git-clean bump-version git-push crates-publish package
+.PHONY: dev test lint install uninstall man help current-version release-patch release-minor release-major check-git-clean bump-version git-push crates-publish package
 
 EXECUTABLE_NAME := kav
 INSTALL_PATH := /usr/local/bin
@@ -25,6 +25,11 @@ install: ## Build release binary and install to /usr/local/bin (may require sudo
 
 uninstall: ## Remove binary from /usr/local/bin (may require sudo)
 	sudo rm -f $(INSTALL_PATH)/$(EXECUTABLE_NAME)
+
+man: ## Generate and install man page (may require sudo)
+	cargo build --release
+	./target/release/$(EXECUTABLE_NAME) man | sudo tee /usr/local/share/man/man1/$(EXECUTABLE_NAME).1 > /dev/null
+	@echo "\033[32mMan page installed at /usr/local/share/man/man1/$(EXECUTABLE_NAME).1\033[0m"
 
 current-version: ## Output current version from Cargo.toml
 	@sed -n 's/^version = "\([0-9.]*\)"/\1/p' Cargo.toml | head -n1
@@ -65,16 +70,19 @@ bump-version:
 
 # Public Release Commands
 release-patch: check-git-clean ## Bump patch version (0.1.0 -> 0.1.1), push, and publish to crates.io
+	cargo publish --dry-run
 	@$(MAKE) bump-version BUMP=patch
 	@$(MAKE) git-push
 	@$(MAKE) crates-publish
 
 release-minor: check-git-clean ## Bump minor version (0.1.x -> 0.2.0), push, and publish to crates.io
+	cargo publish --dry-run
 	@$(MAKE) bump-version BUMP=minor
 	@$(MAKE) git-push
 	@$(MAKE) crates-publish
 
 release-major: check-git-clean ## Bump major version (0.x.x -> 1.0.0), push, and publish to crates.io
+	cargo publish --dry-run
 	@$(MAKE) bump-version BUMP=major
 	@$(MAKE) git-push
 	@$(MAKE) crates-publish

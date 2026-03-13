@@ -1,3 +1,6 @@
+use std::io::Write;
+
+use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
@@ -26,6 +29,10 @@ pub enum Command {
         /// Sort output (port, name, cpu, mem)
         #[arg(long, value_enum)]
         sort: Option<SortField>,
+
+        /// Filter by port number, process name, or service (case-insensitive substring)
+        #[arg(long, short = 'f')]
+        filter: Option<String>,
     },
 
     /// Check what's running on specific port(s)
@@ -44,6 +51,10 @@ pub enum Command {
         /// Force kill (SIGKILL) without confirmation
         #[arg(short, long)]
         force: bool,
+
+        /// Skip interactive confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Print shell completion script for the given shell
@@ -52,9 +63,22 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    /// Print a man page for kav to stdout
+    Man,
 }
 
 /// Generate and print shell completions to stdout.
 pub fn print_completions(shell: Shell) {
     generate(shell, &mut Cli::command(), "kav", &mut std::io::stdout());
+}
+
+/// Generate and print a man page to stdout.
+pub fn print_man_page() -> Result<()> {
+    let cmd = Cli::command();
+    let man = clap_mangen::Man::new(cmd);
+    let mut buf = vec![];
+    man.render(&mut buf)?;
+    std::io::stdout().write_all(&buf)?;
+    Ok(())
 }

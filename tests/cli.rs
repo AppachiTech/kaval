@@ -81,3 +81,67 @@ fn cli_invalid_sort_value() {
         .unwrap();
     assert!(!output.status.success());
 }
+
+#[test]
+fn cli_list_filter_runs() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--filter", "postgres"])
+        .output()
+        .unwrap();
+    // Command succeeds regardless of whether postgres is running
+    assert!(output.status.success());
+}
+
+#[test]
+fn cli_list_filter_short_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "-f", "redis"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn cli_list_filter_with_sort() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--filter", "node", "--sort", "cpu"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn cli_list_filter_json_combo() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--json", "--filter", "zzzunlikelyservice"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // No match → JSON empty array
+    assert_eq!(stdout.trim(), "[]");
+}
+
+#[test]
+fn cli_man_outputs_roff() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .arg("man")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Man pages start with .TH header
+    assert!(stdout.contains(".TH"), "man page should contain .TH macro");
+    assert!(stdout.contains("kav"), "man page should mention kav");
+}
+
+#[test]
+fn cli_kill_nonexistent_port_no_prompt() {
+    // Port 2 is virtually never in use; --yes bypasses TTY prompt
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["kill", "--yes", "2"])
+        .output()
+        .unwrap();
+    // Should exit 1 (nothing found) without hanging on prompt
+    assert!(!output.status.success());
+}

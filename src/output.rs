@@ -126,13 +126,7 @@ fn print_rows(
         "MEM",
         a.reset(),
     );
-    let _ = writeln!(
-        w,
-        "{}{}{}",
-        a.fg(divider),
-        "─".repeat(100),
-        a.reset(),
-    );
+    let _ = writeln!(w, "{}{}{}", a.fg(divider), "─".repeat(100), a.reset(),);
 
     for e in entries {
         let cat_col = t.category_ct_color(e.category);
@@ -176,12 +170,7 @@ fn print_rows(
             a.fg(t.proto_ct_color(e.protocol)),
             e.protocol
         );
-        let _ = write!(
-            w,
-            "{} {:<22}",
-            a.fg(cat_col),
-            truncate(&e.process_name, 22)
-        );
+        let _ = write!(w, "{} {:<22}", a.fg(cat_col), truncate(&e.process_name, 22));
 
         let service_text = match e.known_service {
             Some(svc) if browser_count > 1 => format!("{} ×{}", svc, browser_count),
@@ -276,15 +265,20 @@ fn json_escape(s: &str) -> String {
 }
 
 pub fn print_json(entries: &[models::PortEntry]) -> Result<()> {
+    write_json(entries, &mut io::stdout())
+}
+
+fn write_json(entries: &[models::PortEntry], w: &mut impl Write) -> Result<()> {
     if entries.is_empty() {
-        println!("[]");
+        writeln!(w, "[]")?;
         return Ok(());
     }
     // Manual JSON to avoid serde dependency
-    println!("[");
+    writeln!(w, "[")?;
     for (i, e) in entries.iter().enumerate() {
         let comma = if i < entries.len() - 1 { "," } else { "" };
-        println!(
+        writeln!(
+            w,
             r#"  {{"port":{},"protocol":"{}","process":"{}","service":{},"pid":{},"cpu":{:.1},"memory_mb":{:.1},"uptime_secs":{}}}{}"#,
             e.port,
             e.protocol,
@@ -297,9 +291,9 @@ pub fn print_json(entries: &[models::PortEntry]) -> Result<()> {
             e.memory_mb,
             e.uptime.as_secs(),
             comma,
-        );
+        )?;
     }
-    println!("]");
+    writeln!(w, "]")?;
     Ok(())
 }
 
@@ -392,5 +386,131 @@ mod tests {
         let entries: Vec<models::PortEntry> = vec![];
         let result = print_json(&entries);
         assert!(result.is_ok());
+    }
+
+    // --- JSON round-trip / structural tests ---
+
+    fn make_json_entry(
+        port: u16,
+        name: &str,
+        service: Option<&'static str>,
+        cpu: f32,
+        memory_mb: f64,
+        uptime_secs: u64,
+    ) -> models::PortEntry {
+        use std::net::{IpAddr, Ipv4Addr};
+        models::PortEntry {
+            protocol: models::Protocol::Tcp,
+            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port,
+            pid: port as u32,
+            process_name: name.to_string(),
+            process_cmd: format!("{} --daemon", name),
+            cpu_percent: cpu,
+            memory_mb,
+            uptime: std::time::Duration::from_secs(uptime_secs),
+            known_service: service,
+            category: models::ServiceCategory::Unknown,
+        }
+    }
+
+    #[test]
+    fn print_json_empty_outputs_empty_array() {
+        let mut buf = Vec::new();
+        write_json(&[], &mut buf).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap().trim(), "[]");
+    }
+
+    #[test]
+    fn print_json_single_entry_valid_structure() {
+        let entries = vec![make_json_entry(
+            3000,
+            "node",
+            Some("Next.js"),
+            5.5,
+            100.0,
+            3600,
+        )];
+        let mut buf = Vec::new();
+        write_json(&entries, &mut buf).unwrap();
+        let json = String::from_utf8(buf).unwrap();
+
+        // Outer structure
+        assert!(json.trim_start().starts_with('['), "should start with [");
+        assert!(json.trim_end().ends_with(']'), "should end with ]");
+
+        // Required fields present
+        assert!(json.contains("\"port\":3000"), "port field missing");
+        assert!(
+            json.contains("\"protocol\":\"TCP\""),
+            "protocol field missing"
+        );
+        assert!(
+            json.contains("\"process\":\"node\""),
+            "process field missing"
+        );
+        assert!(
+            json.contains("\"service\":\"Next.js\""),
+            "service field missing"
+        );
+        assert!(json.contains("\"pid\":3000"), "pid field missing");
+        assert!(json.contains("\"cpu\":5.5"), "cpu field missing");
+        assert!(
+            json.contains("\"memory_mb\":100.0"),
+            "memory_mb field missing"
+        );
+        assert!(
+            json.contains("\"uptime_secs\":3600"),
+            "uptime_secs field missing"
+        );
+    }
+
+    #[test]
+    fn print_json_null_service_for_unknown() {
+        let entries = vec![make_json_entry(9999, "custom", None, 0.0, 50.0, 60)];
+        let mut buf = Vec::new();
+        write_json(&entries, &mut buf).unwrap();
+        let json = String::from_utf8(buf).unwrap();
+        assert!(
+            json.contains("\"service\":null"),
+            "null service should appear as null"
+        );
+    }
+
+    #[test]
+    fn print_json_multiple_entries_no_trailing_comma() {
+        let entries = vec![
+            make_json_entry(3000, "node", Some("Next.js"), 0.0, 100.0, 0),
+            make_json_entry(5432, "postgres", Some("PostgreSQL"), 0.0, 200.0, 0),
+        ];
+        let mut buf = Vec::new();
+        write_json(&entries, &mut buf).unwrap();
+        let json = String::from_utf8(buf).unwrap();
+
+        // Last object line must not end with ","
+        let last_obj_line = json
+            .lines()
+            .filter(|l| l.trim_start().starts_with('{'))
+            .last()
+            .unwrap();
+        assert!(
+            !last_obj_line.trim_end().ends_with(','),
+            "last entry must not have trailing comma, got: {}",
+            last_obj_line
+        );
+    }
+
+    #[test]
+    fn print_json_process_name_with_special_chars_is_escaped() {
+        let mut entry = make_json_entry(8080, r#"my"app"#, None, 0.0, 0.0, 0);
+        entry.process_name = r#"my"app\path"#.to_string();
+        let mut buf = Vec::new();
+        write_json(&[entry], &mut buf).unwrap();
+        let json = String::from_utf8(buf).unwrap();
+        // Quotes and backslash must be escaped
+        assert!(
+            json.contains(r#"my\"app\\path"#),
+            "special chars must be escaped"
+        );
     }
 }

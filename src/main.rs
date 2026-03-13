@@ -7,7 +7,7 @@ mod ui;
 mod util;
 
 use std::collections::HashSet;
-use std::io::{self, IsTerminal};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use anyhow::Result;
 use clap::Parser;
@@ -24,10 +24,20 @@ fn main() -> Result<()> {
             ui::run_tui()?;
         }
 
-        Some(Command::List { json, sort }) => {
+        Some(Command::List { json, sort, filter }) => {
             let mut sys = new_system_with_cpu();
             let mut entries = scan_ports(&mut sys, true, true)?;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
+            if let Some(ref pattern) = filter {
+                let q = pattern.to_lowercase();
+                entries.retain(|e| {
+                    e.port.to_string().contains(&q)
+                        || e.process_name.to_lowercase().contains(&q)
+                        || e.known_service
+                            .map(|s| s.to_lowercase().contains(&q))
+                            .unwrap_or(false)
+                });
+            }
             if json {
                 output::print_json(&entries)?;
             } else {
@@ -39,10 +49,7 @@ fn main() -> Result<()> {
             let mut sys = new_system_with_cpu();
             let entries = scan_ports(&mut sys, true, true)?;
             let color = io::stdout().is_terminal();
-            let matches: Vec<_> = entries
-                .iter()
-                .filter(|e| ports.contains(&e.port))
-                .collect();
+            let matches: Vec<_> = entries.iter().filter(|e| ports.contains(&e.port)).collect();
             let missing: Vec<_> = ports
                 .iter()
                 .filter(|p| !entries.iter().any(|e| e.port == **p))
@@ -62,11 +69,12 @@ fn main() -> Result<()> {
             }
         }
 
-        Some(Command::Kill { ports, force }) => {
+        Some(Command::Kill { ports, force, yes }) => {
             let mut sys = new_system_with_cpu();
             let entries = scan_ports(&mut sys, true, true)?;
             let mut killed_pids: HashSet<u32> = HashSet::new();
             let mut any_found = false;
+            let interactive = !yes && io::stdin().is_terminal();
             for port in &ports {
                 let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
                 if matches.is_empty() {
@@ -77,7 +85,20 @@ fn main() -> Result<()> {
                         if !killed_pids.insert(entry.pid) {
                             continue;
                         }
-                        if !force {
+                        // Prompt if running in a TTY and --yes / --force not passed
+                        if interactive && !force {
+                            print!(
+                                "Kill {} (PID {}) on port {}? [y/N] ",
+                                entry.process_name, entry.pid, entry.port
+                            );
+                            io::stdout().flush()?;
+                            let mut input = String::new();
+                            io::stdin().lock().read_line(&mut input)?;
+                            if !input.trim().eq_ignore_ascii_case("y") {
+                                println!("Skipped.");
+                                continue;
+                            }
+                        } else if !force {
                             println!(
                                 "Killing {} (PID {}) on port {}...",
                                 entry.process_name, entry.pid, entry.port
@@ -100,6 +121,10 @@ fn main() -> Result<()> {
 
         Some(Command::Completions { shell }) => {
             cli::print_completions(shell);
+        }
+
+        Some(Command::Man) => {
+            cli::print_man_page()?;
         }
     }
 
