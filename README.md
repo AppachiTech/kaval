@@ -62,12 +62,14 @@ Manual install users can re-run the install command — the URL always points to
 ## Usage
 
 ```sh
-kav                  # Launch interactive TUI
-kav list             # Print all listening ports
-kav list --json      # JSON output
-kav check 3000       # What's on port 3000?
-kav kill 3000        # Kill process on port 3000
-kav kill 3000 -f     # Force kill (SIGKILL)
+kav                       # Launch interactive TUI
+kav list                  # Print all listening ports
+kav list --json           # JSON output
+kav list --sort cpu       # Sort by CPU usage (port, name, cpu, mem)
+kav check 3000            # What's on port 3000?
+kav check 3000 5432 8080  # Check multiple ports
+kav kill 3000             # Kill process on port 3000
+kav kill 3000 5432 -f     # Force kill on multiple ports
 ```
 
 ## TUI Keyboard Shortcuts
@@ -77,11 +79,12 @@ kav kill 3000 -f     # Force kill (SIGKILL)
 | `↑/↓` or `j/k` | Navigate |
 | `/` | Filter by port, name, or service |
 | `Ctrl+X` | Kill selected process (with confirmation) |
-| `Ctrl+K` | Force kill (SIGKILL, no confirmation) |
+| `Ctrl+K` | Force kill (SIGKILL, with confirmation) |
 | `Ctrl+D` | Toggle detail pane |
 | `Ctrl+S` | Cycle sort (Port → Name → CPU → Mem) |
 | `Ctrl+T` | Toggle TCP/UDP filter |
 | `Ctrl+R` | Force refresh |
+| `PgUp/PgDn` | Scroll detail pane |
 | `Ctrl+Q` / `Esc` | Quit |
 
 ## Privacy

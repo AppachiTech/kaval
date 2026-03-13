@@ -11,10 +11,31 @@ use std::io::{self, IsTerminal, Write};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
-use cli::{Cli, Command};
+use cli::{Cli, Command, SortBy};
 use models::ServiceCategory;
 use scanner::{kill_process, new_system_with_cpu, scan_ports};
 use theme::theme;
+
+fn sort_entries(entries: &mut [models::PortEntry], sort: Option<SortBy>) {
+    match sort {
+        None | Some(SortBy::Port) => entries.sort_by_key(|e| e.port),
+        Some(SortBy::Name) => entries.sort_by(|a, b| {
+            a.process_name
+                .to_lowercase()
+                .cmp(&b.process_name.to_lowercase())
+        }),
+        Some(SortBy::Cpu) => entries.sort_by(|a, b| {
+            b.cpu_percent
+                .partial_cmp(&a.cpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        Some(SortBy::Mem) => entries.sort_by(|a, b| {
+            b.memory_mb
+                .partial_cmp(&a.memory_mb)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -25,9 +46,10 @@ fn main() -> Result<()> {
             ui::run_tui()?;
         }
 
-        Some(Command::List { json }) => {
+        Some(Command::List { json, sort }) => {
             let mut sys = new_system_with_cpu();
-            let entries = scan_ports(&mut sys, true, true)?;
+            let mut entries = scan_ports(&mut sys, true, true)?;
+            sort_entries(&mut entries, sort);
             if json {
                 print_json(&entries)?;
             } else {
@@ -52,6 +74,15 @@ fn main() -> Result<()> {
             }
             for port in &missing {
                 println!("Nothing listening on port {}", port);
+            }
+            // Summary when checking multiple ports
+            if ports.len() > 1 {
+                let active = ports.len() - missing.len();
+                println!(
+                    "\n{} of {} ports active",
+                    active,
+                    ports.len()
+                );
             }
             if matches.is_empty() {
                 std::process::exit(1);
@@ -78,7 +109,7 @@ fn main() -> Result<()> {
                                 entry.process_name, entry.pid, entry.port
                             );
                         }
-                        kill_process(entry.pid, force)?;
+                        kill_process(&sys, entry.pid, force)?;
                         println!(
                             "{}Killed {} (PID {})",
                             if force { "Force " } else { "" },

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
@@ -19,6 +19,10 @@ pub enum Command {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+
+        /// Sort output (port, name, cpu, mem)
+        #[arg(long, value_enum)]
+        sort: Option<SortBy>,
     },
 
     /// Check what's running on specific port(s)
@@ -38,4 +42,12 @@ pub enum Command {
         #[arg(short, long)]
         force: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SortBy {
+    Port,
+    Name,
+    Cpu,
+    Mem,
 }

@@ -99,11 +99,8 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
     Ok(entries)
 }
 
-/// Kill a process by PID (cross-platform: macOS, Linux, Windows)
-pub fn kill_process(pid: u32, force: bool) -> Result<()> {
-    let mut sys = System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-
+/// Kill a process by PID. Pass a `System` that has been refreshed.
+pub fn kill_process(sys: &System, pid: u32, force: bool) -> Result<()> {
     let pid_obj = sysinfo::Pid::from_u32(pid);
     let proc = sys
         .process(pid_obj)

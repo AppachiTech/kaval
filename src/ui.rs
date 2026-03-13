@@ -248,7 +248,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 let pid = entry.pid;
                 let name = entry.process_name.clone();
                 let port = entry.port;
-                match kill_process(pid, force) {
+                match kill_process(&app.sys, pid, force) {
                     Ok(()) => {
                         app.status_msg = Some((
                             format!(
@@ -369,8 +369,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
-        KeyCode::Left => app.detail_scroll = app.detail_scroll.saturating_sub(3),
-        KeyCode::Right => app.detail_scroll = app.detail_scroll.saturating_add(3),
+        KeyCode::PageUp | KeyCode::Left => {
+            app.detail_scroll = app.detail_scroll.saturating_sub(3);
+        }
+        KeyCode::PageDown | KeyCode::Right => {
+            app.detail_scroll = app.detail_scroll.saturating_add(3);
+        }
         KeyCode::Char('/') => {
             app.filter_active = true;
         }
@@ -627,7 +631,11 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         ))]
     };
 
-    let scroll_hint = if app.detail_scroll > 0 { " ◀/▶ scroll " } else { " Detail " };
+    let scroll_hint = if app.detail_scroll > 0 {
+        " Detail (PgUp/PgDn to scroll) ▲ "
+    } else {
+        " Detail (PgUp/PgDn to scroll) "
+    };
 
     let block = Block::default()
         .title(scroll_hint)
