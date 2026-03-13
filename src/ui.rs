@@ -32,7 +32,7 @@ struct App {
     show_udp: bool,
     sort_field: SortField,
     show_detail: bool,
-    confirm_kill: Option<usize>, // index of entry to confirm kill
+    confirm_kill: Option<(usize, bool)>, // (index, force) of entry to confirm kill
     status_msg: Option<(String, Instant)>,
     should_quit: bool,
 }
@@ -49,7 +49,7 @@ impl App {
             show_udp: true,
             sort_field: SortField::Port,
             show_detail: false,
-            confirm_kill: None,
+            confirm_kill: None, // (index, force)
             status_msg: None,
             should_quit: false,
         }
@@ -183,17 +183,23 @@ pub fn run_tui() -> Result<()> {
 
 fn handle_key(app: &mut App, key: KeyEvent) {
     // Kill confirmation dialog takes priority
-    if let Some(idx) = app.confirm_kill {
+    if let Some((idx, force)) = app.confirm_kill {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let entry = &app.entries[app.filtered[idx]];
                 let pid = entry.pid;
                 let name = entry.process_name.clone();
                 let port = entry.port;
-                match kill_process(pid, false) {
+                match kill_process(pid, force) {
                     Ok(()) => {
                         app.status_msg = Some((
-                            format!("Killed {} (PID {}) on port {}", name, pid, port),
+                            format!(
+                                "{}Killed {} (PID {}) on port {}",
+                                if force { "Force " } else { "" },
+                                name,
+                                pid,
+                                port
+                            ),
                             Instant::now(),
                         ));
                         app.refresh();
@@ -222,32 +228,16 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 // Kill with confirmation
                 if let Some(selected) = app.table_state.selected() {
                     if selected < app.filtered.len() {
-                        app.confirm_kill = Some(selected);
+                        app.confirm_kill = Some((selected, false));
                     }
                 }
                 return;
             }
             KeyCode::Char('k') => {
-                // Force kill (SIGKILL), no confirmation
+                // Force kill (SIGKILL), with confirmation
                 if let Some(selected) = app.table_state.selected() {
                     if selected < app.filtered.len() {
-                        let entry = &app.entries[app.filtered[selected]];
-                        let pid = entry.pid;
-                        let name = entry.process_name.clone();
-                        let port = entry.port;
-                        match kill_process(pid, true) {
-                            Ok(()) => {
-                                app.status_msg = Some((
-                                    format!("Force killed {} (PID {}) on port {}", name, pid, port),
-                                    Instant::now(),
-                                ));
-                                app.refresh();
-                            }
-                            Err(e) => {
-                                app.status_msg =
-                                    Some((format!("Kill failed: {}", e), Instant::now()));
-                            }
-                        }
+                        app.confirm_kill = Some((selected, true));
                     }
                 }
                 return;
@@ -354,10 +344,10 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_status_bar(f, app, chunks[2]);
 
     // Kill confirmation overlay
-    if let Some(idx) = app.confirm_kill {
+    if let Some((idx, force)) = app.confirm_kill {
         if let Some(&entry_idx) = app.filtered.get(idx) {
             let entry = &app.entries[entry_idx];
-            draw_kill_confirm(f, entry);
+            draw_kill_confirm(f, entry, force);
         }
     }
 }
@@ -625,12 +615,19 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(shortcuts), area);
 }
 
-fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry) {
+fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry, force: bool) {
     let t = theme();
     let area = f.area();
 
+    let title = if force {
+        " Confirm Force Kill (SIGKILL) "
+    } else {
+        " Confirm Kill "
+    };
+    let action = if force { "  Force kill " } else { "  Kill " };
+
     // Center a dialog box
-    let dialog_width = 50u16.min(area.width.saturating_sub(4));
+    let dialog_width = 55u16.min(area.width.saturating_sub(4));
     let dialog_height = 5u16;
     let x = (area.width.saturating_sub(dialog_width)) / 2;
     let y = (area.height.saturating_sub(dialog_height)) / 2;
@@ -642,7 +639,7 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry) {
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                "  Kill ",
+                action,
                 Style::default().fg(t.error).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
@@ -661,7 +658,7 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry) {
     ];
 
     let block = Block::default()
-        .title(" Confirm Kill ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.error));
 
