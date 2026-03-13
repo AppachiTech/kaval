@@ -22,8 +22,4 @@ crossterm = "0.28"
 clap = { version = "4.5", features = ["derive"] }
 sysinfo = "0.32"
 netstat2 = "0.11"
-chrono = "0.4"
 anyhow = "1.0"
-
-[build-dependencies]
-chrono = "0.4"

@@ -10,8 +10,6 @@ use std::io::{self, IsTerminal, Write};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
-use models::{format_memory, format_uptime};
-
 use cli::{Cli, Command};
 use models::ServiceCategory;
 use scanner::{kill_process, scan_ports};
@@ -95,25 +93,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Grouped browser entry for display
-struct BrowserGroup {
-    service: &'static str,
-    category: ServiceCategory,
-    protocol: models::Protocol,
-    pid: u32,
-    process_name: String,
-    cpu_percent: f32,
-    memory_mb: f64,
-    uptime: std::time::Duration,
-    count: usize,
-}
-
-/// Row to render — either a single entry or a grouped browser
-enum DisplayRow<'a> {
-    Single(&'a models::PortEntry),
-    Grouped(BrowserGroup),
-}
-
 /// Helper to conditionally emit ANSI color/attribute codes
 struct Ansi(bool);
 
@@ -147,54 +126,31 @@ fn print_table(entries: &[models::PortEntry], color: bool) {
         return;
     }
 
-    // Build display rows: group browser entries by (pid, service)
-    let mut rows: Vec<DisplayRow> = Vec::new();
-    let mut browser_groups: std::collections::HashMap<
-        (u32, &'static str),
-        Vec<&models::PortEntry>,
-    > = std::collections::HashMap::new();
-
+    // Count browser entries per (pid, service) and deduplicate
+    let mut browser_counts: std::collections::HashMap<(u32, &str), usize> =
+        std::collections::HashMap::new();
     for e in entries {
         if e.category == ServiceCategory::Browser {
             if let Some(svc) = e.known_service {
-                browser_groups.entry((e.pid, svc)).or_default().push(e);
-                continue;
+                *browser_counts.entry((e.pid, svc)).or_insert(0) += 1;
             }
         }
-        rows.push(DisplayRow::Single(e));
     }
 
-    // Convert browser groups to display rows, sorted by first entry's port
-    let mut grouped: Vec<DisplayRow> = browser_groups
-        .into_iter()
-        .map(|((pid, svc), group)| {
-            let first = group[0];
-            DisplayRow::Grouped(BrowserGroup {
-                service: svc,
-                category: first.category,
-                protocol: first.protocol,
-                pid,
-                process_name: first.process_name.clone(),
-                cpu_percent: first.cpu_percent,
-                memory_mb: first.memory_mb,
-                uptime: first.uptime,
-                count: group.len(),
-            })
+    // Build deduplicated list: keep first browser entry per (pid, service)
+    let mut browser_seen: std::collections::HashSet<(u32, &str)> =
+        std::collections::HashSet::new();
+    let display_entries: Vec<&models::PortEntry> = entries
+        .iter()
+        .filter(|e| {
+            if e.category == ServiceCategory::Browser {
+                if let Some(svc) = e.known_service {
+                    return browser_seen.insert((e.pid, svc));
+                }
+            }
+            true
         })
         .collect();
-    // Sort grouped rows by process name for consistent ordering
-    grouped.sort_by(|a, b| {
-        let a_name = match a {
-            DisplayRow::Grouped(g) => &g.process_name,
-            _ => unreachable!(),
-        };
-        let b_name = match b {
-            DisplayRow::Grouped(g) => &g.process_name,
-            _ => unreachable!(),
-        };
-        a_name.cmp(b_name)
-    });
-    rows.extend(grouped);
 
     let t = theme();
     let a = Ansi(color);
@@ -231,119 +187,81 @@ fn print_table(entries: &[models::PortEntry], color: bool) {
         a.reset(),
     );
 
-    for row in &rows {
-        match row {
-            DisplayRow::Single(e) => {
-                let cat_col = t.category_ct_color(e.category);
-                let port_col = if e.known_service.is_some() {
-                    Color::White
-                } else {
-                    light
-                };
+    for e in &display_entries {
+        let cat_col = t.category_ct_color(e.category);
 
-                let _ = write!(
-                    w,
-                    "{}{}  {:<6}{}",
-                    a.fg(port_col),
-                    a.bold(),
-                    e.port,
-                    a.reset()
-                );
-                let _ = write!(
-                    w,
-                    "{} {:<5}",
-                    a.fg(t.proto_ct_color(e.protocol)),
-                    e.protocol
-                );
-                let _ = write!(
-                    w,
-                    "{} {:<22}",
-                    a.fg(cat_col),
-                    truncate(&e.process_name, 22)
-                );
+        // Resolve browser grouping
+        let browser_count = if e.category == ServiceCategory::Browser {
+            e.known_service
+                .and_then(|svc| browser_counts.get(&(e.pid, svc)).copied())
+                .unwrap_or(1)
+        } else {
+            1
+        };
 
-                let service = e.known_service.unwrap_or("");
-                if service.is_empty() {
-                    let _ = write!(w, "{} {:<20}", a.fg(divider), "·");
-                } else {
-                    let _ = write!(
-                        w,
-                        "{}{} {:<20}{}",
-                        a.fg(cat_col),
-                        a.bold(),
-                        service,
-                        a.reset()
-                    );
-                }
+        let port_text = if browser_count > 1 {
+            "···".to_string()
+        } else {
+            e.port.to_string()
+        };
+        let port_col = if e.known_service.is_some() {
+            Color::White
+        } else {
+            light
+        };
 
-                let _ = write!(w, "{} {:<7}", a.fg(dim), e.pid);
-                let cpu_str = format!("{:.1}%", e.cpu_percent);
-                let cpu_col = if e.cpu_percent > 50.0 {
-                    error
-                } else if e.cpu_percent > 10.0 {
-                    warning
-                } else {
-                    dim
-                };
-                let _ = write!(w, "{} {:<7}", a.fg(cpu_col), cpu_str);
-                let _ = write!(w, "{} {:<9}", a.fg(light), e.memory_display());
-                let _ = write!(w, "{} {}", a.fg(dim), e.uptime_display());
-                let _ = writeln!(w, "{}", a.reset());
-            }
-            DisplayRow::Grouped(g) => {
-                let cat_col = t.category_ct_color(g.category);
-                let svc_label = format!("{} ×{}", g.service, g.count);
+        let _ = write!(
+            w,
+            "{}{}  {:<6}{}",
+            a.fg(port_col),
+            a.bold(),
+            port_text,
+            a.reset()
+        );
+        let _ = write!(
+            w,
+            "{} {:<5}",
+            a.fg(t.proto_ct_color(e.protocol)),
+            e.protocol
+        );
+        let _ = write!(
+            w,
+            "{} {:<22}",
+            a.fg(cat_col),
+            truncate(&e.process_name, 22)
+        );
 
-                let _ = write!(
-                    w,
-                    "{}{}  {:<6}{}",
-                    a.fg(dim),
-                    a.bold(),
-                    "···",
-                    a.reset()
-                );
-                let _ = write!(
-                    w,
-                    "{} {:<5}",
-                    a.fg(t.proto_ct_color(g.protocol)),
-                    g.protocol
-                );
-                let _ = write!(
-                    w,
-                    "{} {:<22}",
-                    a.fg(cat_col),
-                    truncate(&g.process_name, 22)
-                );
-                let _ = write!(
-                    w,
-                    "{}{} {:<20}{}",
-                    a.fg(cat_col),
-                    a.bold(),
-                    svc_label,
-                    a.reset()
-                );
-                let _ = write!(w, "{} {:<7}", a.fg(dim), g.pid);
-                let _ = write!(
-                    w,
-                    "{} {:<7}",
-                    a.fg(dim),
-                    format!("{:.1}%", g.cpu_percent)
-                );
-                let _ = write!(
-                    w,
-                    "{} {:<9}",
-                    a.fg(light),
-                    format_memory(g.memory_mb)
-                );
-                let _ = write!(
-                    w,
-                    "{} {}",
-                    a.fg(dim),
-                    format_uptime(g.uptime)
-                );
-                let _ = writeln!(w, "{}", a.reset());
-            }
+        let service_text = match e.known_service {
+            Some(svc) if browser_count > 1 => format!("{} ×{}", svc, browser_count),
+            Some(svc) => svc.to_string(),
+            None => String::new(),
+        };
+        if service_text.is_empty() {
+            let _ = write!(w, "{} {:<20}", a.fg(divider), "·");
+        } else {
+            let _ = write!(
+                w,
+                "{}{} {:<20}{}",
+                a.fg(cat_col),
+                a.bold(),
+                service_text,
+                a.reset()
+            );
         }
+
+        let _ = write!(w, "{} {:<7}", a.fg(dim), e.pid);
+        let cpu_str = format!("{:.1}%", e.cpu_percent);
+        let cpu_col = if e.cpu_percent > 50.0 {
+            error
+        } else if e.cpu_percent > 10.0 {
+            warning
+        } else {
+            dim
+        };
+        let _ = write!(w, "{} {:<7}", a.fg(cpu_col), cpu_str);
+        let _ = write!(w, "{} {:<9}", a.fg(light), e.memory_display());
+        let _ = write!(w, "{} {}", a.fg(dim), e.uptime_display());
+        let _ = writeln!(w, "{}", a.reset());
     }
 
     // Summary
