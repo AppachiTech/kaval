@@ -92,6 +92,44 @@ kav kill 3000 5432 -f     # Force kill on multiple ports
 
 Designed for scripting: `kav check 3000 && echo "server is up"` or `kav kill 3000 || echo "nothing to kill"`.
 
+## JSON Output Schema
+
+`kav list --json` outputs a JSON array — one object per listening port:
+
+```json
+[
+  {
+    "port": 5432,
+    "protocol": "TCP",
+    "process": "postmaster",
+    "service": "PostgreSQL",
+    "pid": 1234,
+    "cpu": 0.5,
+    "memory_mb": 42.0,
+    "uptime_secs": 3600
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `port` | integer | Port number |
+| `protocol` | `"TCP"` \| `"UDP"` | Socket protocol |
+| `process` | string | Process name as reported by the OS |
+| `service` | string \| `null` | Identified service name (`null` if unknown) |
+| `pid` | integer | Process ID |
+| `cpu` | float | CPU usage % (sampled over ~200 ms at startup) |
+| `memory_mb` | float | Resident memory in megabytes |
+| `uptime_secs` | integer | Process uptime in seconds |
+
+**Example usage with `jq`:**
+
+```sh
+kav list --json | jq '.[] | select(.service == "PostgreSQL")'
+kav list --json | jq 'map(select(.cpu > 10)) | sort_by(.cpu) | reverse'
+kav list --json | jq '[.[].port]'
+```
+
 ## TUI Keyboard Shortcuts
 
 | Key | Action |

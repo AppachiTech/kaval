@@ -38,4 +38,4 @@ jobs:
       - name: Security audit
         run: |
           cargo install cargo-audit --quiet
-          cargo audit
+          cargo audit --deny warnings
