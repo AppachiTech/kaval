@@ -1,197 +1,159 @@
 use crate::models::ServiceCategory;
 
+/// How to match a process name
+#[derive(Clone, Copy)]
+enum Match {
+    /// name.contains(pattern)
+    Contains(&'static str),
+    /// name == pattern
+    Exact(&'static str),
+    /// name.starts_with(pattern)
+    Prefix(&'static str),
+    /// name.contains(a) && name.contains(b)
+    Both(&'static str, &'static str),
+}
+
+/// Process name → (service, category) mapping table.
+/// Order matters: first match wins.
+const PROCESS_RULES: &[(Match, &str, ServiceCategory)] = &[
+    // Databases
+    (Match::Contains("postgres"), "PostgreSQL", ServiceCategory::Database),
+    (Match::Contains("postmaster"), "PostgreSQL", ServiceCategory::Database),
+    (Match::Contains("mysql"), "MySQL", ServiceCategory::Database),
+    (Match::Contains("mariadbd"), "MySQL", ServiceCategory::Database),
+    (Match::Contains("mariadb"), "MySQL", ServiceCategory::Database),
+    (Match::Contains("mongod"), "MongoDB", ServiceCategory::Database),
+    (Match::Contains("mongos"), "MongoDB", ServiceCategory::Database),
+    (Match::Contains("clickhouse"), "ClickHouse", ServiceCategory::Database),
+    (Match::Contains("elasticsearch"), "Elasticsearch", ServiceCategory::Database),
+    (Match::Contains("opensearch"), "Elasticsearch", ServiceCategory::Database),
+    (Match::Contains("minio"), "MinIO", ServiceCategory::Database),
+    // Cache / message brokers
+    (Match::Contains("redis-server"), "Redis", ServiceCategory::Cache),
+    (Match::Exact("redis"), "Redis", ServiceCategory::Cache),
+    (Match::Contains("memcached"), "Memcached", ServiceCategory::Cache),
+    (Match::Contains("kafka"), "Kafka", ServiceCategory::Cache),
+    (Match::Contains("rabbitmq"), "RabbitMQ", ServiceCategory::Cache),
+    (Match::Contains("beam.smp"), "RabbitMQ", ServiceCategory::Cache),
+    (Match::Contains("nats-server"), "NATS", ServiceCategory::Cache),
+    (Match::Exact("nats"), "NATS", ServiceCategory::Cache),
+    // Containers
+    (Match::Contains("docker"), "Docker", ServiceCategory::Container),
+    (Match::Contains("containerd"), "Docker", ServiceCategory::Container),
+    (Match::Contains("colima"), "Colima", ServiceCategory::Container),
+    (Match::Contains("kubectl"), "Kubernetes", ServiceCategory::Container),
+    (Match::Contains("kubelet"), "Kubernetes", ServiceCategory::Container),
+    // Dev tools / runtimes
+    (Match::Exact("bun"), "Bun", ServiceCategory::DevServer),
+    (Match::Prefix("bun "), "Bun", ServiceCategory::DevServer),
+    (Match::Exact("deno"), "Deno", ServiceCategory::DevServer),
+    (Match::Prefix("deno "), "Deno", ServiceCategory::DevServer),
+    (Match::Contains("ollama"), "Ollama", ServiceCategory::DevServer),
+    (Match::Contains("supabase"), "Supabase", ServiceCategory::DevServer),
+    (Match::Contains("code helper"), "VS Code", ServiceCategory::DevServer),
+    (Match::Prefix("code - "), "VS Code", ServiceCategory::DevServer),
+    (Match::Both("cursor", "helper"), "Cursor", ServiceCategory::DevServer),
+    (Match::Contains("electron"), "Electron", ServiceCategory::DevServer),
+    // Browsers
+    (Match::Contains("brave browser"), "Brave", ServiceCategory::Browser),
+    (Match::Contains("brave helper"), "Brave", ServiceCategory::Browser),
+    (Match::Contains("google chrome"), "Chrome", ServiceCategory::Browser),
+    (Match::Contains("chrome helper"), "Chrome", ServiceCategory::Browser),
+    (Match::Contains("firefox"), "Firefox", ServiceCategory::Browser),
+    (Match::Contains("geckodriver"), "Firefox", ServiceCategory::Browser),
+    (Match::Contains("safari"), "Safari", ServiceCategory::Browser),
+    (Match::Contains("webkit"), "Safari", ServiceCategory::Browser),
+    // System / infrastructure
+    (Match::Contains("sshd"), "SSH", ServiceCategory::System),
+    (Match::Contains("nginx"), "Nginx", ServiceCategory::System),
+    (Match::Contains("httpd"), "Apache", ServiceCategory::System),
+    (Match::Contains("apache"), "Apache", ServiceCategory::System),
+    (Match::Contains("controlcenter"), "AirPlay", ServiceCategory::System),
+    (Match::Contains("sharingd"), "Sharing", ServiceCategory::System),
+    (Match::Contains("rapportd"), "Rapport", ServiceCategory::System),
+    (Match::Contains("identityservicesd"), "Identity", ServiceCategory::System),
+    (Match::Contains("grafana"), "Grafana", ServiceCategory::System),
+    (Match::Contains("prometheus"), "Prometheus", ServiceCategory::System),
+    (Match::Contains("caddy"), "Caddy", ServiceCategory::System),
+    (Match::Contains("traefik"), "Traefik", ServiceCategory::System),
+    (Match::Contains("envoy"), "Envoy", ServiceCategory::System),
+    (Match::Contains("haproxy"), "HAProxy", ServiceCategory::System),
+];
+
+/// Port → (service, category) mapping table.
+const PORT_RULES: &[(u16, &str, ServiceCategory)] = &[
+    // Dev servers
+    (3000, "Next.js / Rails", ServiceCategory::DevServer),
+    (3001, "React Dev", ServiceCategory::DevServer),
+    (4000, "Phoenix", ServiceCategory::DevServer),
+    (4200, "Angular", ServiceCategory::DevServer),
+    (5173, "Vite", ServiceCategory::DevServer),
+    (5174, "Vite", ServiceCategory::DevServer),
+    (8000, "Django / FastAPI", ServiceCategory::DevServer),
+    (8080, "HTTP Alt", ServiceCategory::DevServer),
+    (8443, "HTTPS Alt", ServiceCategory::DevServer),
+    (8888, "Jupyter", ServiceCategory::DevServer),
+    (9000, "PHP-FPM", ServiceCategory::DevServer),
+    (19006, "Expo", ServiceCategory::DevServer),
+    // Databases
+    (3306, "MySQL", ServiceCategory::Database),
+    (5432, "PostgreSQL", ServiceCategory::Database),
+    (5433, "PostgreSQL Alt", ServiceCategory::Database),
+    (27017, "MongoDB", ServiceCategory::Database),
+    (26257, "CockroachDB", ServiceCategory::Database),
+    (9200, "Elasticsearch", ServiceCategory::Database),
+    (8123, "ClickHouse", ServiceCategory::Database),
+    (9004, "ClickHouse", ServiceCategory::Database),
+    (9100, "MinIO", ServiceCategory::Database),
+    // Cache / brokers
+    (6379, "Redis", ServiceCategory::Cache),
+    (11211, "Memcached", ServiceCategory::Cache),
+    (9092, "Kafka", ServiceCategory::Cache),
+    (5672, "RabbitMQ", ServiceCategory::Cache),
+    (15672, "RabbitMQ UI", ServiceCategory::Cache),
+    (4222, "NATS", ServiceCategory::Cache),
+    // Container / orchestration
+    (2375, "Docker", ServiceCategory::Container),
+    (2376, "Docker", ServiceCategory::Container),
+    // Dev tools
+    (11434, "Ollama", ServiceCategory::DevServer),
+    // System
+    (22, "SSH", ServiceCategory::System),
+    (80, "HTTP", ServiceCategory::System),
+    (443, "HTTPS", ServiceCategory::System),
+    (53, "DNS", ServiceCategory::System),
+    (9090, "Prometheus", ServiceCategory::System),
+    (2019, "Caddy Admin", ServiceCategory::System),
+];
+
+fn matches_rule(name: &str, m: Match) -> bool {
+    match m {
+        Match::Contains(p) => name.contains(p),
+        Match::Exact(p) => name == p,
+        Match::Prefix(p) => name.starts_with(p),
+        Match::Both(a, b) => name.contains(a) && name.contains(b),
+    }
+}
+
 /// Known port-to-service mappings for common developer tools
 pub fn identify_service(port: u16, process_name: &str) -> (Option<&'static str>, ServiceCategory) {
-    // First try process name detection (more reliable than port)
     let name_lower = process_name.to_lowercase();
 
-    if let Some(result) = identify_by_process_name(&name_lower) {
-        return result;
+    // First try process name detection (more reliable than port)
+    for &(ref matcher, service, category) in PROCESS_RULES {
+        if matches_rule(&name_lower, *matcher) {
+            return (Some(service), category);
+        }
     }
 
     // Fall back to well-known port mappings
-    identify_by_port(port)
-}
-
-fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, ServiceCategory)> {
-    // Databases
-    if name.contains("postgres") || name.contains("postmaster") {
-        return Some((Some("PostgreSQL"), ServiceCategory::Database));
-    }
-    if name.contains("mysql") || name.contains("mariadbd") || name.contains("mariadb") {
-        return Some((Some("MySQL"), ServiceCategory::Database));
-    }
-    if name.contains("mongod") || name.contains("mongos") {
-        return Some((Some("MongoDB"), ServiceCategory::Database));
-    }
-    if name.contains("clickhouse") {
-        return Some((Some("ClickHouse"), ServiceCategory::Database));
-    }
-    if name.contains("elasticsearch") || name.contains("opensearch") {
-        return Some((Some("Elasticsearch"), ServiceCategory::Database));
+    for &(p, service, category) in PORT_RULES {
+        if port == p {
+            return (Some(service), category);
+        }
     }
 
-    // Cache / message brokers
-    if name.contains("redis-server") || name == "redis" {
-        return Some((Some("Redis"), ServiceCategory::Cache));
-    }
-    if name.contains("memcached") {
-        return Some((Some("Memcached"), ServiceCategory::Cache));
-    }
-    if name.contains("kafka") {
-        return Some((Some("Kafka"), ServiceCategory::Cache));
-    }
-    if name.contains("rabbitmq") || name.contains("beam.smp") {
-        return Some((Some("RabbitMQ"), ServiceCategory::Cache));
-    }
-    if name.contains("nats-server") || name == "nats" {
-        return Some((Some("NATS"), ServiceCategory::Cache));
-    }
-
-    // Containers
-    if name.contains("docker") || name.contains("containerd") {
-        return Some((Some("Docker"), ServiceCategory::Container));
-    }
-    if name.contains("colima") {
-        return Some((Some("Colima"), ServiceCategory::Container));
-    }
-    if name.contains("kubectl") || name.contains("kubelet") {
-        return Some((Some("Kubernetes"), ServiceCategory::Container));
-    }
-
-    // Dev tools / runtimes
-    if name == "bun" || name.starts_with("bun ") {
-        return Some((Some("Bun"), ServiceCategory::DevServer));
-    }
-    if name == "deno" || name.starts_with("deno ") {
-        return Some((Some("Deno"), ServiceCategory::DevServer));
-    }
-    if name.contains("ollama") {
-        return Some((Some("Ollama"), ServiceCategory::DevServer));
-    }
-    if name.contains("supabase") {
-        return Some((Some("Supabase"), ServiceCategory::DevServer));
-    }
-    if name.contains("minio") {
-        return Some((Some("MinIO"), ServiceCategory::Database));
-    }
-    if name.contains("code helper") || name.starts_with("code - ") {
-        return Some((Some("VS Code"), ServiceCategory::DevServer));
-    }
-    if name.contains("cursor") && name.contains("helper") {
-        return Some((Some("Cursor"), ServiceCategory::DevServer));
-    }
-    if name.contains("electron") {
-        return Some((Some("Electron"), ServiceCategory::DevServer));
-    }
-
-    // Browsers
-    if name.contains("brave browser") || name.contains("brave helper") {
-        return Some((Some("Brave"), ServiceCategory::Browser));
-    }
-    if name.contains("google chrome") || name.contains("chrome helper") {
-        return Some((Some("Chrome"), ServiceCategory::Browser));
-    }
-    if name.contains("firefox") || name.contains("geckodriver") {
-        return Some((Some("Firefox"), ServiceCategory::Browser));
-    }
-    if name.contains("safari") || name.contains("webkit") {
-        return Some((Some("Safari"), ServiceCategory::Browser));
-    }
-
-    // System services
-    if name.contains("sshd") {
-        return Some((Some("SSH"), ServiceCategory::System));
-    }
-    if name == "nginx" || name.contains("nginx") {
-        return Some((Some("Nginx"), ServiceCategory::System));
-    }
-    if name.contains("httpd") || name.contains("apache") {
-        return Some((Some("Apache"), ServiceCategory::System));
-    }
-    if name.contains("controlcenter") {
-        return Some((Some("AirPlay"), ServiceCategory::System));
-    }
-    if name.contains("sharingd") {
-        return Some((Some("Sharing"), ServiceCategory::System));
-    }
-    if name.contains("rapportd") {
-        return Some((Some("Rapport"), ServiceCategory::System));
-    }
-    if name.contains("identityservicesd") {
-        return Some((Some("Identity"), ServiceCategory::System));
-    }
-    if name.contains("grafana") {
-        return Some((Some("Grafana"), ServiceCategory::System));
-    }
-    if name.contains("prometheus") {
-        return Some((Some("Prometheus"), ServiceCategory::System));
-    }
-    if name.contains("caddy") {
-        return Some((Some("Caddy"), ServiceCategory::System));
-    }
-    if name.contains("traefik") {
-        return Some((Some("Traefik"), ServiceCategory::System));
-    }
-    if name.contains("envoy") {
-        return Some((Some("Envoy"), ServiceCategory::System));
-    }
-    if name.contains("haproxy") {
-        return Some((Some("HAProxy"), ServiceCategory::System));
-    }
-
-    None
-}
-
-fn identify_by_port(port: u16) -> (Option<&'static str>, ServiceCategory) {
-    match port {
-        // Dev servers
-        3000 => (Some("Next.js / Rails"), ServiceCategory::DevServer),
-        3001 => (Some("React Dev"), ServiceCategory::DevServer),
-        4000 => (Some("Phoenix"), ServiceCategory::DevServer),
-        4200 => (Some("Angular"), ServiceCategory::DevServer),
-        5173 | 5174 => (Some("Vite"), ServiceCategory::DevServer),
-        8000 => (Some("Django / FastAPI"), ServiceCategory::DevServer),
-        8080 => (Some("HTTP Alt"), ServiceCategory::DevServer),
-        8443 => (Some("HTTPS Alt"), ServiceCategory::DevServer),
-        8888 => (Some("Jupyter"), ServiceCategory::DevServer),
-        9000 => (Some("PHP-FPM"), ServiceCategory::DevServer),
-        19006 => (Some("Expo"), ServiceCategory::DevServer),
-
-        // Databases
-        3306 => (Some("MySQL"), ServiceCategory::Database),
-        5432 => (Some("PostgreSQL"), ServiceCategory::Database),
-        5433 => (Some("PostgreSQL Alt"), ServiceCategory::Database),
-        27017 => (Some("MongoDB"), ServiceCategory::Database),
-        26257 => (Some("CockroachDB"), ServiceCategory::Database),
-        9200 => (Some("Elasticsearch"), ServiceCategory::Database),
-        8123 | 9004 => (Some("ClickHouse"), ServiceCategory::Database),
-        9100 => (Some("MinIO"), ServiceCategory::Database),
-
-        // Cache / brokers
-        6379 => (Some("Redis"), ServiceCategory::Cache),
-        11211 => (Some("Memcached"), ServiceCategory::Cache),
-        9092 => (Some("Kafka"), ServiceCategory::Cache),
-        5672 => (Some("RabbitMQ"), ServiceCategory::Cache),
-        15672 => (Some("RabbitMQ UI"), ServiceCategory::Cache),
-        4222 => (Some("NATS"), ServiceCategory::Cache),
-
-        // Container / orchestration
-        2375 | 2376 => (Some("Docker"), ServiceCategory::Container),
-
-        // Dev tools
-        11434 => (Some("Ollama"), ServiceCategory::DevServer),
-
-        // System
-        22 => (Some("SSH"), ServiceCategory::System),
-        80 => (Some("HTTP"), ServiceCategory::System),
-        443 => (Some("HTTPS"), ServiceCategory::System),
-        53 => (Some("DNS"), ServiceCategory::System),
-        9090 => (Some("Prometheus"), ServiceCategory::System),
-        2019 => (Some("Caddy Admin"), ServiceCategory::System),
-
-        _ => (None, ServiceCategory::Unknown),
-    }
+    (None, ServiceCategory::Unknown)
 }
 
 #[cfg(test)]
