@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+            sha_cmd: "shasum -a 256"
+          - os: ubuntu-latest
+            platform: linux
+            sha_cmd: "sha256sum"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Binary (Release)
+        run: cargo build --release
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p artifacts/${{ matrix.platform }}/archive
+          cp target/release/kav kav
+          tar -czf artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz kav LICENSE scripts/uninstall.sh
+          ${{ matrix.sha_cmd }} artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz | awk '{print $1}' > artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256
+          cp artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz artifacts/${{ matrix.platform }}/archive/kav-${{ matrix.platform }}-${{ github.ref_name }}.tar.gz
+          cp artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256 artifacts/${{ matrix.platform }}/archive/kav-${{ matrix.platform }}-${{ github.ref_name }}.tar.gz.sha256
+
+      - name: Upload to Cloudflare R2
+        uses: ryand56/r2-upload-action@latest
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ secrets.R2_BUCKET }}
+          source-dir: artifacts
+          destination-dir: ./
+
+      - name: Purge Cloudflare CDN Cache
+        run: |
+          curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CF_PURGE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "files": [
+                "https://downloads.appachi.tech/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz",
+                "https://downloads.appachi.tech/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256"
+              ]
+            }'
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: artifacts/${{ matrix.platform }}/archive/
+
+  update-homebrew:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos
+          path: artifacts/
+
+      - name: Update Homebrew Tap
+        run: |
+          TAG=${{ github.ref_name }}
+          TARBALL_NAME="kav-macos-${TAG}.tar.gz"
+          TARBALL_PATH="artifacts/${TARBALL_NAME}"
+          SHASUM=$(shasum -a 256 $TARBALL_PATH | awk '{print $1}')
+          echo "SHA256: $SHASUM"
+
+          git clone https://${{ secrets.GH_PAT }}@github.com/AppachiTech/homebrew-kaval.git homebrew-tap
+          cd homebrew-tap
+
+          FORMULA_PATH="Formula/kaval.rb"
+          sed -i '' "s/version \".*\"/version \"${TAG#v}\"/" $FORMULA_PATH
+          NEW_URL="https://downloads.appachi.tech/macos/archive/${TARBALL_NAME}"
+          sed -i '' "s|url \".*\"|url \"${NEW_URL}\"|" $FORMULA_PATH
+          sed -i '' "s/sha256 \".*\"/sha256 \"${SHASUM}\"/" $FORMULA_PATH
+
+          git config user.name "Appachi Bot"
+          git config user.email "bot@appachi.tech"
+          git add $FORMULA_PATH
+          git commit -m "Update kaval to $TAG"
+          git push
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos
+          path: artifacts/macos/
+
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: artifacts/linux/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/macos/kav-macos-${{ github.ref_name }}.tar.gz
+            artifacts/macos/kav-macos-${{ github.ref_name }}.tar.gz.sha256
+            artifacts/linux/kav-linux-${{ github.ref_name }}.tar.gz
+            artifacts/linux/kav-linux-${{ github.ref_name }}.tar.gz.sha256
