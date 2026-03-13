@@ -21,16 +21,18 @@ pub enum Command {
         json: bool,
     },
 
-    /// Check what's running on a specific port
+    /// Check what's running on specific port(s)
     Check {
-        /// Port number to check
-        port: u16,
+        /// Port number(s) to check
+        #[arg(required = true)]
+        ports: Vec<u16>,
     },
 
-    /// Kill the process listening on a port
+    /// Kill the process(es) listening on port(s)
     Kill {
-        /// Port number whose process to kill
-        port: u16,
+        /// Port number(s) whose processes to kill
+        #[arg(required = true)]
+        ports: Vec<u16>,
 
         /// Force kill (SIGKILL) without confirmation
         #[arg(short, long)]

@@ -22,8 +22,12 @@ pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
 
     let sockets = get_sockets_info(af_flags, proto_flags)?;
 
-    // Build a sysinfo System for process lookups
+    // Build a sysinfo System for process lookups.
+    // CPU usage requires two refreshes with a delay — the first establishes
+    // a baseline, the second computes the delta.
     let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     // Collect PIDs we care about, then look them up

@@ -33,58 +33,66 @@ fn main() -> Result<()> {
             }
         }
 
-        Some(Command::Check { port }) => {
+        Some(Command::Check { ports }) => {
             let entries = scan_ports(true, true)?;
-            let matches: Vec<_> = entries.iter().filter(|e| e.port == port).collect();
-            if matches.is_empty() {
-                println!("Nothing listening on port {}", port);
-                std::process::exit(1);
-            } else {
-                for entry in &matches {
-                    println!(
-                        "Port {} ({}) — {} (PID {}){}",
-                        entry.port,
-                        entry.protocol,
-                        entry.process_name,
-                        entry.pid,
-                        entry
-                            .known_service
-                            .map(|s| format!(" [{}]", s))
-                            .unwrap_or_default(),
-                    );
-                    if !entry.process_cmd.is_empty() {
-                        println!("  Command: {}", entry.process_cmd);
+            let mut any_found = false;
+            for port in &ports {
+                let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
+                if matches.is_empty() {
+                    println!("Nothing listening on port {}", port);
+                } else {
+                    any_found = true;
+                    for entry in &matches {
+                        println!(
+                            "Port {} ({}) — {} (PID {}){}",
+                            entry.port,
+                            entry.protocol,
+                            entry.process_name,
+                            entry.pid,
+                            entry
+                                .known_service
+                                .map(|s| format!(" [{}]", s))
+                                .unwrap_or_default(),
+                        );
+                        if !entry.process_cmd.is_empty() {
+                            println!("  Command: {}", entry.process_cmd);
+                        }
+                        println!(
+                            "  CPU: {:.1}%  Memory: {}  Uptime: {}",
+                            entry.cpu_percent,
+                            entry.memory_display(),
+                            entry.uptime_display()
+                        );
                     }
-                    println!(
-                        "  CPU: {:.1}%  Memory: {}  Uptime: {}",
-                        entry.cpu_percent,
-                        entry.memory_display(),
-                        entry.uptime_display()
-                    );
                 }
+            }
+            if !any_found {
+                std::process::exit(1);
             }
         }
 
-        Some(Command::Kill { port, force }) => {
+        Some(Command::Kill { ports, force }) => {
             let entries = scan_ports(true, true)?;
-            let matches: Vec<_> = entries.iter().filter(|e| e.port == port).collect();
-            if matches.is_empty() {
-                println!("Nothing listening on port {}", port);
-            } else {
-                for entry in &matches {
-                    if !force {
+            for port in &ports {
+                let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
+                if matches.is_empty() {
+                    println!("Nothing listening on port {}", port);
+                } else {
+                    for entry in &matches {
+                        if !force {
+                            println!(
+                                "Killing {} (PID {}) on port {}...",
+                                entry.process_name, entry.pid, entry.port
+                            );
+                        }
+                        kill_process(entry.pid, force)?;
                         println!(
-                            "Killing {} (PID {}) on port {}...",
-                            entry.process_name, entry.pid, entry.port
+                            "{}Killed {} (PID {})",
+                            if force { "Force " } else { "" },
+                            entry.process_name,
+                            entry.pid
                         );
                     }
-                    kill_process(entry.pid, force)?;
-                    println!(
-                        "{}Killed {} (PID {})",
-                        if force { "Force " } else { "" },
-                        entry.process_name,
-                        entry.pid
-                    );
                 }
             }
         }

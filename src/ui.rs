@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
     Frame, Terminal,
 };
 
@@ -35,6 +35,7 @@ struct App {
     show_udp: bool,
     sort_field: SortField,
     show_detail: bool,
+    detail_scroll: u16,
     confirm_kill: Option<(usize, bool)>, // (index, force) of entry to confirm kill
     status_msg: Option<(String, Instant)>,
     should_quit: bool,
@@ -53,6 +54,7 @@ impl App {
             show_udp: true,
             sort_field: SortField::Port,
             show_detail: true,
+            detail_scroll: 0,
             confirm_kill: None, // (index, force)
             status_msg: None,
             should_quit: false,
@@ -171,6 +173,9 @@ impl App {
         }
         let current = self.table_state.selected().unwrap_or(0) as i32;
         let new = (current + delta).clamp(0, self.filtered.len() as i32 - 1) as usize;
+        if self.table_state.selected() != Some(new) {
+            self.detail_scroll = 0;
+        }
         self.table_state.select(Some(new));
     }
 }
@@ -351,6 +356,8 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
+        KeyCode::Left => app.detail_scroll = app.detail_scroll.saturating_sub(3),
+        KeyCode::Right => app.detail_scroll = app.detail_scroll.saturating_add(3),
         KeyCode::Char('/') => {
             app.filter_active = true;
         }
@@ -607,12 +614,17 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         ))]
     };
 
+    let scroll_hint = if app.detail_scroll > 0 { " ◀/▶ scroll " } else { " Detail " };
+
     let block = Block::default()
-        .title(" Detail ")
+        .title(scroll_hint)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.border));
 
-    let paragraph = Paragraph::new(content).block(block);
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0));
     f.render_widget(paragraph, area);
 }
 
