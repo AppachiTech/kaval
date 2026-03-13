@@ -12,7 +12,7 @@ use clap::Parser;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 use cli::{Cli, Command};
 use models::ServiceCategory;
-use scanner::{kill_process, scan_ports};
+use scanner::{kill_process, new_system_with_cpu, scan_ports};
 use theme::theme;
 
 fn main() -> Result<()> {
@@ -25,7 +25,8 @@ fn main() -> Result<()> {
         }
 
         Some(Command::List { json }) => {
-            let entries = scan_ports(true, true)?;
+            let mut sys = new_system_with_cpu();
+            let entries = scan_ports(&mut sys, true, true)?;
             if json {
                 print_json(&entries)?;
             } else {
@@ -34,45 +35,31 @@ fn main() -> Result<()> {
         }
 
         Some(Command::Check { ports }) => {
-            let entries = scan_ports(true, true)?;
-            let mut any_found = false;
-            for port in &ports {
-                let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
-                if matches.is_empty() {
-                    println!("Nothing listening on port {}", port);
-                } else {
-                    any_found = true;
-                    for entry in &matches {
-                        println!(
-                            "Port {} ({}) — {} (PID {}){}",
-                            entry.port,
-                            entry.protocol,
-                            entry.process_name,
-                            entry.pid,
-                            entry
-                                .known_service
-                                .map(|s| format!(" [{}]", s))
-                                .unwrap_or_default(),
-                        );
-                        if !entry.process_cmd.is_empty() {
-                            println!("  Command: {}", entry.process_cmd);
-                        }
-                        println!(
-                            "  CPU: {:.1}%  Memory: {}  Uptime: {}",
-                            entry.cpu_percent,
-                            entry.memory_display(),
-                            entry.uptime_display()
-                        );
-                    }
-                }
+            let mut sys = new_system_with_cpu();
+            let entries = scan_ports(&mut sys, true, true)?;
+            let color = io::stdout().is_terminal();
+            let matches: Vec<_> = entries
+                .iter()
+                .filter(|e| ports.contains(&e.port))
+                .collect();
+            let missing: Vec<_> = ports
+                .iter()
+                .filter(|p| !entries.iter().any(|e| e.port == **p))
+                .collect();
+            if !matches.is_empty() {
+                print_check_table(&matches, color);
             }
-            if !any_found {
+            for port in &missing {
+                println!("Nothing listening on port {}", port);
+            }
+            if matches.is_empty() {
                 std::process::exit(1);
             }
         }
 
         Some(Command::Kill { ports, force }) => {
-            let entries = scan_ports(true, true)?;
+            let mut sys = new_system_with_cpu();
+            let entries = scan_ports(&mut sys, true, true)?;
             for port in &ports {
                 let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
                 if matches.is_empty() {
@@ -294,6 +281,94 @@ fn print_table(entries: &[models::PortEntry], color: bool) {
         let _ = write!(w, " · {} known services", services);
     }
     let _ = writeln!(w, "{}", a.reset());
+}
+
+fn print_check_table(entries: &[&models::PortEntry], color: bool) {
+    let t = theme();
+    let a = Ansi(color);
+    let out = io::stdout();
+    let mut w = out.lock();
+
+    let hdr = t.ct(t.text_secondary);
+    let dim = t.ct(t.text_muted);
+    let divider = t.ct(t.border);
+    let error = t.ct(t.error);
+    let warning = t.ct(t.warning);
+
+    // Header
+    let _ = writeln!(
+        w,
+        "{}{}  {:<6} {:<5} {:<22} {:<20} {:<7} {:<7} {:<9} UPTIME{}",
+        a.fg(hdr),
+        a.bold(),
+        "PORT",
+        "PROTO",
+        "PROCESS",
+        "SERVICE",
+        "PID",
+        "CPU",
+        "MEM",
+        a.reset(),
+    );
+    let _ = writeln!(
+        w,
+        "{}{}{}",
+        a.fg(divider),
+        "─".repeat(100),
+        a.reset(),
+    );
+
+    for e in entries {
+        let cat_col = t.category_ct_color(e.category);
+        let port_col = if e.known_service.is_some() {
+            Color::White
+        } else {
+            t.ct(t.text_secondary)
+        };
+
+        let _ = write!(w, "{}{}  {:<6}{}", a.fg(port_col), a.bold(), e.port, a.reset());
+        let _ = write!(w, "{} {:<5}", a.fg(t.proto_ct_color(e.protocol)), e.protocol);
+        let _ = write!(w, "{} {:<22}", a.fg(cat_col), truncate(&e.process_name, 22));
+
+        let service_text = e.known_service.unwrap_or("");
+        if service_text.is_empty() {
+            let _ = write!(w, "{} {:<20}", a.fg(divider), "·");
+        } else {
+            let _ = write!(
+                w,
+                "{}{} {:<20}{}",
+                a.fg(cat_col),
+                a.bold(),
+                service_text,
+                a.reset()
+            );
+        }
+
+        let _ = write!(w, "{} {:<7}", a.fg(dim), e.pid);
+        let cpu_str = format!("{:.1}%", e.cpu_percent);
+        let cpu_col = if e.cpu_percent > 50.0 {
+            error
+        } else if e.cpu_percent > 10.0 {
+            warning
+        } else {
+            dim
+        };
+        let _ = write!(w, "{} {:<7}", a.fg(cpu_col), cpu_str);
+        let _ = write!(w, "{} {:<9}", a.fg(t.ct(t.text_secondary)), e.memory_display());
+        let _ = write!(w, "{} {}", a.fg(dim), e.uptime_display());
+        let _ = writeln!(w, "{}", a.reset());
+
+        // Show command line below the row
+        if !e.process_cmd.is_empty() {
+            let _ = writeln!(
+                w,
+                "{}    cmd: {}{}",
+                a.fg(dim),
+                truncate(&e.process_cmd, 90),
+                a.reset()
+            );
+        }
+    }
 }
 
 fn print_json(entries: &[models::PortEntry]) -> Result<()> {

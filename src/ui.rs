@@ -18,6 +18,8 @@ use ratatui::{
 
 use std::collections::HashMap;
 
+use sysinfo::System;
+
 use crate::models::{PortEntry, ServiceCategory, SortField};
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
@@ -25,6 +27,7 @@ use crate::theme::theme;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 struct App {
+    sys: System,
     entries: Vec<PortEntry>,
     filtered: Vec<usize>,                   // indices into entries
     browser_counts: HashMap<(u32, String), usize>, // (pid, service) -> port count
@@ -43,7 +46,11 @@ struct App {
 
 impl App {
     fn new() -> Self {
+        let mut sys = System::new();
+        // First refresh establishes baseline for CPU calculation
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         Self {
+            sys,
             entries: Vec::new(),
             filtered: Vec::new(),
             browser_counts: HashMap::new(),
@@ -62,7 +69,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        match scan_ports(self.show_tcp, self.show_udp) {
+        match scan_ports(&mut self.sys, self.show_tcp, self.show_udp) {
             Ok(entries) => {
                 self.entries = entries;
                 self.sort_entries();

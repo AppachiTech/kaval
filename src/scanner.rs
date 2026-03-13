@@ -8,8 +8,19 @@ use sysinfo::System;
 use crate::models::{PortEntry, Protocol};
 use crate::util::identify_service;
 
+/// Create a System with the two-refresh dance needed for accurate CPU usage.
+/// Use this for one-shot commands. For the TUI, reuse a persistent System instead.
+pub fn new_system_with_cpu() -> System {
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys
+}
+
 /// Scan the system for all listening ports and map them to process info.
-pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
+/// Pass a persistent `System` for accurate CPU readings across refreshes.
+pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
     let mut proto_flags = ProtocolFlags::empty();
     if show_tcp {
         proto_flags |= ProtocolFlags::TCP;
@@ -22,12 +33,6 @@ pub fn scan_ports(show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
 
     let sockets = get_sockets_info(af_flags, proto_flags)?;
 
-    // Build a sysinfo System for process lookups.
-    // CPU usage requires two refreshes with a delay — the first establishes
-    // a baseline, the second computes the delta.
-    let mut sys = System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     // Collect PIDs we care about, then look them up
