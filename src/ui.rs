@@ -16,7 +16,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sysinfo::System;
 
@@ -119,7 +119,7 @@ impl App {
         }
 
         // Track which browser (pid, service) groups we've already included
-        let mut browser_seen: HashMap<(u32, String), bool> = HashMap::new();
+        let mut browser_seen: HashSet<(u32, String)> = HashSet::new();
 
         self.filtered = self
             .entries
@@ -140,11 +140,9 @@ impl App {
                 // Deduplicate browser entries: keep only first per (pid, service)
                 if e.category == ServiceCategory::Browser {
                     if let Some(svc) = e.known_service {
-                        let key = (e.pid, svc.to_string());
-                        if browser_seen.contains_key(&key) {
+                        if !browser_seen.insert((e.pid, svc.to_string())) {
                             return false;
                         }
-                        browser_seen.insert(key, true);
                     }
                 }
 
@@ -188,6 +186,14 @@ impl App {
 }
 
 pub fn run_tui() -> Result<()> {
+    // Install panic hook to restore terminal on crash
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
