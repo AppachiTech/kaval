@@ -26,6 +26,40 @@ fn port_matches(port: u16, query: &str) -> bool {
     }
 }
 
+/// Refresh `kav list` output in-place on the same screen.
+/// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
+fn run_watch(sort: Option<SortField>, filter: Option<&str>) -> Result<()> {
+    use crossterm::{cursor, execute, terminal};
+
+    let color = io::stdout().is_terminal();
+    let mut sys = new_system_with_cpu();
+
+    loop {
+        execute!(
+            io::stdout(),
+            terminal::Clear(terminal::ClearType::All),
+            cursor::MoveTo(0, 0)
+        )?;
+        println!("kav watch  —  Ctrl+C to exit  —  refreshing every 2s\n");
+
+        let mut entries = scan_ports(&mut sys, true, true)?;
+        sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
+        if let Some(pattern) = filter {
+            let q = pattern.to_lowercase();
+            entries.retain(|e| {
+                port_matches(e.port, &q)
+                    || e.process_name.to_lowercase().contains(&q)
+                    || e.known_service
+                        .map(|s| s.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+            });
+        }
+        output::print_table(&entries, color);
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -35,7 +69,13 @@ fn main() -> Result<()> {
             ui::run_tui()?;
         }
 
-        Some(Command::List { json, sort, filter }) => {
+        Some(Command::List { json, sort, filter, watch }) => {
+            if watch {
+                if json {
+                    anyhow::bail!("--watch and --json are mutually exclusive");
+                }
+                run_watch(sort, filter.as_deref())?;
+            }
             let mut sys = new_system_with_cpu();
             let mut entries = scan_ports(&mut sys, true, true)?;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port));

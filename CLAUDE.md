@@ -14,7 +14,9 @@ Binary: `kav`. Tagline: "Guard your ports."
 - **util.rs** — Known service detection by port number and process name
 
 ## Key Dependencies
-- `netstat2` — Cross-platform socket enumeration (macOS: proc_pidfdinfo, Linux: procfs)
+- `netstat2` — Cross-platform socket enumeration (macOS: proc_pidfdinfo, Linux: procfs).
+  **Low-activity upstream.** This is the most likely breakage point on OS upgrades.
+  Migration path: direct `/proc/net/tcp` parsing on Linux (no crate); `proc-info` on macOS.
 - `sysinfo` — Process details (name, CPU, memory, uptime)
 - `ratatui` + `crossterm` — TUI rendering
 - `clap` — CLI parsing

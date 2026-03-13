@@ -182,6 +182,48 @@ fn port_matches(port: u16, query: &str) -> bool {
     }
 }
 
+/// Copy text to the system clipboard. Returns true if successful.
+/// Uses pbcopy on macOS, xclip/xsel on Linux. Silent no-op on other platforms.
+#[cfg(target_os = "macos")]
+fn clipboard_copy(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() else {
+        return false;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_copy(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let candidates: &[(&str, &[&str])] = &[
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+    for &(prog, args) in candidates {
+        let Ok(mut child) = Command::new(prog).args(args).stdin(Stdio::piped()).spawn() else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if child.wait().map(|s| s.success()).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn clipboard_copy(_text: &str) -> bool {
+    false
+}
+
 pub fn run_tui() -> Result<()> {
     // Install panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -393,6 +435,18 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('?') => {
             app.show_help = true;
+        }
+        KeyCode::Char('y') => {
+            if let Some(entry) = app.selected_entry() {
+                let text = entry.port.to_string();
+                if clipboard_copy(&text) {
+                    app.status_msg =
+                        Some((format!("Copied port {} to clipboard", text), Instant::now()));
+                } else {
+                    app.status_msg =
+                        Some(("Clipboard unavailable (pbcopy/xclip/xsel not found)".to_string(), Instant::now()));
+                }
+            }
         }
         _ => {}
     }

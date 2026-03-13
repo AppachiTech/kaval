@@ -43,6 +43,10 @@ Exit codes:
         /// Filter by port number, process name, or service (case-insensitive substring)
         #[arg(long, short = 'f')]
         filter: Option<String>,
+
+        /// Refresh in-place every 2 seconds. Press Ctrl+C to exit. Incompatible with --json.
+        #[arg(long, short = 'w')]
+        watch: bool,
     },
 
     /// Check what's running on specific port(s)

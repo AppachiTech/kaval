@@ -74,6 +74,8 @@ kav                       # Launch interactive TUI
 kav list                  # Print all listening ports
 kav list --json           # JSON output
 kav list --sort cpu       # Sort by CPU usage (port, name, cpu, mem)
+kav list --watch          # Refresh in-place every 2s (Ctrl+C to exit)
+kav list -w -f postgres   # Watch filtered to postgres only
 kav check 3000            # What's on port 3000?
 kav check 3000 5432 8080  # Check multiple ports
 kav kill 3000             # Kill process on port 3000
@@ -146,6 +148,7 @@ kav list --json | jq '[.[].port]'
 | `PgUp/PgDn` | Scroll detail pane |
 | `Ctrl+Q` / `Esc` | Quit |
 | `?` | Show keyboard shortcut help |
+| `y` | Yank port number to clipboard |
 
 ## Privacy
 
