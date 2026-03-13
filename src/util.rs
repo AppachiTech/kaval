@@ -14,7 +14,34 @@ enum Match {
 }
 
 /// Process name → (service, category) mapping table.
-/// Order matters: first match wins.
+///
+/// # Matching algorithm
+///
+/// Each entry is `(Match, service_name, ServiceCategory)`.  The process name
+/// passed in has already been lowercased by `identify_service`, so all
+/// patterns here must also be lowercase.
+///
+/// Match variants:
+/// - `Contains(p)` — `name.contains(p)`
+/// - `Exact(p)` — `name == p`
+/// - `Prefix(p)` — `name.starts_with(p)` (include the trailing space to avoid
+///   false positives, e.g. `"bun "` won't match `"bundle"`)
+/// - `Both(a, b)` — `name.contains(a) && name.contains(b)` — use when one
+///   fragment alone is too ambiguous (e.g. `"cursor"+"helper"`)
+///
+/// # Priority
+///
+/// Process rules are tried **before** `PORT_RULES`.  Within this table, the
+/// **first** matching rule wins; put more-specific patterns above less-specific
+/// ones (e.g. `"redis-server"` before the bare `"redis"` exact match).
+///
+/// # How to add a new service
+///
+/// 1. Choose the tightest `Match` variant that uniquely identifies the process.
+/// 2. Pick or create a `ServiceCategory` in `models.rs`.
+/// 3. Add a matching port entry to `PORT_RULES` below if there is a well-known
+///    default port for the service.
+/// 4. Add unit tests to `scanner.rs` (`make_port_entry_identifies_*`).
 const PROCESS_RULES: &[(Match, &str, ServiceCategory)] = &[
     // Databases
     (

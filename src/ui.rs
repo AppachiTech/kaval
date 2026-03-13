@@ -89,6 +89,7 @@ impl App {
             Ok(entries) => {
                 self.entries = entries;
                 self.sort_entries();
+                self.browser_counts = count_browser_groups(&self.entries);
                 self.apply_filter();
             }
             Err(e) => {
@@ -103,9 +104,6 @@ impl App {
 
     fn apply_filter(&mut self) {
         let query = self.filter_text.to_lowercase();
-
-        // Shared helper replaces the manual counting loop
-        self.browser_counts = count_browser_groups(&self.entries);
 
         // Track which browser (pid, service) groups we've already included
         let mut browser_seen: HashSet<(u32, &'static str)> = HashSet::new();
@@ -658,7 +656,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(t.text_secondary),
                 )),
                 Line::from(Span::styled(
-                    &entry.process_cmd,
+                    entry.process_cmd.join(" "),
                     Style::default().fg(t.text_muted),
                 )),
             ]);
@@ -903,7 +901,7 @@ mod tests {
             port,
             pid: port as u32,
             process_name: name.to_string(),
-            process_cmd: String::new(),
+            process_cmd: vec![],
             cpu_percent: cpu,
             memory_mb: memory,
             uptime: Duration::from_secs(100),
@@ -916,6 +914,7 @@ mod tests {
         let mut app = App::new();
         app.entries = entries;
         app.sort_entries();
+        app.browser_counts = count_browser_groups(&app.entries);
         app.apply_filter();
         app
     }
@@ -1264,7 +1263,7 @@ mod tests {
             port,
             pid,
             process_name: "Google Chrome Helper".to_string(),
-            process_cmd: String::new(),
+            process_cmd: vec![],
             cpu_percent: 1.0,
             memory_mb: 50.0,
             uptime: Duration::from_secs(100),

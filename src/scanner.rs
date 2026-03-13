@@ -28,7 +28,7 @@ pub(crate) fn make_port_entry(
     port: u16,
     pid: u32,
     process_name: String,
-    process_cmd: String,
+    process_cmd: Vec<String>,
     cpu_percent: f32,
     memory_mb: f64,
     uptime: Duration,
@@ -89,12 +89,11 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
             let (process_name, process_cmd, cpu_percent, memory_mb, uptime) =
                 if let Some(proc) = sys.process(pid_obj) {
                     let name = proc.name().to_string_lossy().to_string();
-                    let cmd = proc
+                    let cmd: Vec<String> = proc
                         .cmd()
                         .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .collect();
                     let cpu = proc.cpu_usage();
                     let mem = proc.memory() as f64 / (1024.0 * 1024.0);
                     let up = Duration::from_secs(proc.run_time());
@@ -104,7 +103,7 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
                     // and process lookup. Use a clear placeholder rather than "?".
                     (
                         String::from("<exited>"),
-                        String::new(),
+                        Vec::new(),
                         0.0,
                         0.0,
                         Duration::ZERO,
@@ -169,7 +168,7 @@ mod tests {
             5432,
             1000,
             "postmaster".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,
@@ -188,7 +187,7 @@ mod tests {
             6379,
             2000,
             "redis-server".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,
@@ -205,7 +204,7 @@ mod tests {
             3000,
             3000,
             "node".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,
@@ -221,7 +220,7 @@ mod tests {
             9999,
             4000,
             "my-custom-app".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,
@@ -238,7 +237,7 @@ mod tests {
             0,
             9999,
             "?".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,
@@ -257,7 +256,7 @@ mod tests {
             54321,
             5000,
             "postgres".to_string(),
-            String::new(),
+            vec![],
             0.0,
             0.0,
             Duration::ZERO,

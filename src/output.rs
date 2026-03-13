@@ -195,7 +195,7 @@ fn print_rows(
                 w,
                 "{}    cmd: {}{}",
                 a.fg(dim),
-                truncate(&e.process_cmd, 90),
+                truncate(&e.process_cmd.join(" "), 90),
                 a.reset()
             );
         }
@@ -390,7 +390,7 @@ mod tests {
             port,
             pid: port as u32,
             process_name: name.to_string(),
-            process_cmd: format!("{} --daemon", name),
+            process_cmd: vec![name.to_string(), "--daemon".to_string()],
             cpu_percent: cpu,
             memory_mb,
             uptime: std::time::Duration::from_secs(uptime_secs),
