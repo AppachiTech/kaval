@@ -21,7 +21,8 @@ use std::collections::{HashMap, HashSet};
 use sysinfo::System;
 
 use crate::models::{
-    sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
+    count_browser_groups, sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD,
+    CPU_WARN_THRESHOLD,
 };
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
@@ -31,8 +32,8 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 struct App {
     sys: System,
     entries: Vec<PortEntry>,
-    filtered: Vec<usize>,                          // indices into entries
-    browser_counts: HashMap<(u32, String), usize>, // (pid, service) -> port count
+    filtered: Vec<usize>,                                // indices into entries
+    browser_counts: HashMap<(u32, &'static str), usize>, // (pid, service) -> port count
     table_state: TableState,
     filter_text: String,
     filter_active: bool,
@@ -42,6 +43,7 @@ struct App {
     show_detail: bool,
     detail_scroll: u16,
     confirm_kill: Option<(u32, String, u16, bool)>, // (pid, name, port, force)
+    show_help: bool,
     status_msg: Option<(String, Instant)>,
     should_quit: bool,
 }
@@ -65,6 +67,7 @@ impl App {
             show_detail: true,
             detail_scroll: 0,
             confirm_kill: None,
+            show_help: false,
             status_msg: None,
             should_quit: false,
         }
@@ -90,21 +93,11 @@ impl App {
     fn apply_filter(&mut self) {
         let query = self.filter_text.to_lowercase();
 
-        // Count browser entries per (pid, service) for grouping
-        self.browser_counts.clear();
-        for e in &self.entries {
-            if e.category == ServiceCategory::Browser {
-                if let Some(svc) = e.known_service {
-                    *self
-                        .browser_counts
-                        .entry((e.pid, svc.to_string()))
-                        .or_insert(0) += 1;
-                }
-            }
-        }
+        // Shared helper replaces the manual counting loop
+        self.browser_counts = count_browser_groups(&self.entries);
 
         // Track which browser (pid, service) groups we've already included
-        let mut browser_seen: HashSet<(u32, String)> = HashSet::new();
+        let mut browser_seen: HashSet<(u32, &'static str)> = HashSet::new();
 
         self.filtered = self
             .entries
@@ -125,7 +118,7 @@ impl App {
                 // Deduplicate browser entries: keep only first per (pid, service)
                 if e.category == ServiceCategory::Browser {
                     if let Some(svc) = e.known_service {
-                        if !browser_seen.insert((e.pid, svc.to_string())) {
+                        if !browser_seen.insert((e.pid, svc)) {
                             return false;
                         }
                     }
@@ -235,6 +228,12 @@ pub fn run_tui() -> Result<()> {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
+    // Help overlay: any key dismisses it
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
+
     // Kill confirmation dialog takes priority
     if let Some((pid, ref name, port, force)) = app.confirm_kill.clone() {
         match key.code {
@@ -383,6 +382,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('/') => {
             app.filter_active = true;
         }
+        KeyCode::Char('?') => {
+            app.show_help = true;
+        }
         _ => {}
     }
 }
@@ -417,6 +419,11 @@ fn draw(f: &mut Frame, app: &mut App) {
     // Kill confirmation overlay
     if let Some((pid, ref name, port, force)) = app.confirm_kill {
         draw_kill_confirm(f, pid, name, port, force);
+    }
+
+    // Help overlay (drawn on top of everything)
+    if app.show_help {
+        draw_help_overlay(f);
     }
 }
 
@@ -507,7 +514,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
             // For grouped browser entries, look up how many ports this (pid, service) has
             let browser_count = if e.category == ServiceCategory::Browser {
                 e.known_service
-                    .and_then(|svc| app.browser_counts.get(&(e.pid, svc.to_string())).copied())
+                    .and_then(|svc| app.browser_counts.get(&(e.pid, svc)).copied())
                     .unwrap_or(1)
             } else {
                 1
@@ -706,10 +713,67 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             "^Q",
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Quit", Style::default().fg(t.text_muted)),
+        Span::styled(" Quit  ", Style::default().fg(t.text_muted)),
+        Span::styled(
+            "?",
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Help", Style::default().fg(t.text_muted)),
     ]);
 
     f.render_widget(Paragraph::new(shortcuts), area);
+}
+
+fn draw_help_overlay(f: &mut Frame) {
+    let t = theme();
+    let area = f.area();
+
+    let rows = [
+        ("↑/↓  j/k", "Navigate list"),
+        ("Home / End", "Jump to top / bottom"),
+        ("/", "Enter filter mode"),
+        ("Ctrl+X", "Kill selected (SIGTERM, confirm)"),
+        ("Ctrl+K", "Force kill (SIGKILL, confirm)"),
+        ("Ctrl+D", "Toggle detail pane"),
+        ("Ctrl+S", "Cycle sort: Port → Name → CPU → Mem"),
+        ("Ctrl+T", "Cycle protocol filter: TCP+UDP → TCP → UDP"),
+        ("Ctrl+R", "Force refresh"),
+        ("PgUp/PgDn", "Scroll detail pane"),
+        ("Ctrl+Q / Esc", "Quit"),
+        ("?", "Show / dismiss this help"),
+    ];
+
+    let dialog_width = 58u16.min(area.width.saturating_sub(4));
+    let dialog_height = rows.len() as u16 + 4; // header + rows + padding + border
+    let x = (area.width.saturating_sub(dialog_width)) / 2;
+    let y = (area.height.saturating_sub(dialog_height)) / 2;
+    let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
+
+    f.render_widget(Clear, dialog_area);
+
+    let mut lines = vec![Line::from(""), Line::from("")];
+    for (key, desc) in &rows {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<18}", key),
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(*desc, Style::default().fg(t.text_muted)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press any key to dismiss",
+        Style::default().fg(t.text_muted),
+    )));
+
+    let block = Block::default()
+        .title(" Keyboard Shortcuts ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.primary));
+
+    let paragraph = Paragraph::new(lines).block(block);
+    f.render_widget(paragraph, dialog_area);
 }
 
 fn draw_kill_confirm(f: &mut Frame, pid: u32, name: &str, port: u16, force: bool) {
@@ -1172,10 +1236,7 @@ mod tests {
         // 3 Chrome entries collapsed to 1, plus 1 node entry = 2
         assert_eq!(app.filtered.len(), 2);
         // The browser group count should be 3
-        assert_eq!(
-            app.browser_counts.get(&(100, "Chrome".to_string())),
-            Some(&3)
-        );
+        assert_eq!(app.browser_counts.get(&(100, "Chrome")), Some(&3));
     }
 
     #[test]
@@ -1206,9 +1267,6 @@ mod tests {
         ]);
         // Only 1 Chrome entry — no grouping, count is 1
         assert_eq!(app.filtered.len(), 2);
-        assert_eq!(
-            app.browser_counts.get(&(100, "Chrome".to_string())),
-            Some(&1)
-        );
+        assert_eq!(app.browser_counts.get(&(100, "Chrome")), Some(&1));
     }
 }

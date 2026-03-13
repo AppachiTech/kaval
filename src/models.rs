@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -128,6 +129,55 @@ impl SortField {
             SortField::Memory => "Mem",
         }
     }
+}
+
+/// Build a map of `(pid, service) → port count` for browser entries.
+///
+/// Browser processes (Chrome, Firefox, Brave, Safari) typically open dozens of
+/// ephemeral ports. This function groups them by `(pid, service)` so the UI can
+/// collapse all ports for one browser instance into a single row.
+///
+/// Used by both the CLI renderer (`output.rs`) and the TUI (`ui.rs`) to avoid
+/// duplicating the same logic.
+pub fn count_browser_groups(entries: &[PortEntry]) -> HashMap<(u32, &'static str), usize> {
+    let mut counts: HashMap<(u32, &'static str), usize> = HashMap::new();
+    for e in entries {
+        if e.category == ServiceCategory::Browser {
+            if let Some(svc) = e.known_service {
+                *counts.entry((e.pid, svc)).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// Build the deduplicated list of entries for display, keeping only the first
+/// browser entry per `(pid, service)` group.
+///
+/// Returns indices into `entries` that should be shown. Pass the result of
+/// `count_browser_groups` as `counts` to avoid recomputing it.
+pub fn dedup_browser_indices(
+    entries: &[PortEntry],
+    counts: &HashMap<(u32, &'static str), usize>,
+) -> Vec<usize> {
+    let mut seen: HashSet<(u32, &'static str)> = HashSet::new();
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            if e.category == ServiceCategory::Browser {
+                if let Some(svc) = e.known_service {
+                    // Only include the first entry per (pid, service) group
+                    if counts.get(&(e.pid, svc)).copied().unwrap_or(0) > 1
+                        && !seen.insert((e.pid, svc))
+                    {
+                        return None;
+                    }
+                }
+            }
+            Some(i)
+        })
+        .collect()
 }
 
 /// Sort a slice of PortEntry in-place by the given field.

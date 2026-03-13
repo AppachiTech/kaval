@@ -80,20 +80,34 @@ kav kill 3000             # Kill process on port 3000
 kav kill 3000 5432 -f     # Force kill on multiple ports
 ```
 
+## Exit Codes
+
+| Command | 0 | 1 | other |
+|---------|---|---|-------|
+| `kav list` | always | — | — |
+| `kav check` | ≥1 port active | no ports active | — |
+| `kav kill` | ≥1 process killed | nothing listening | kill failed (e.g. permission denied) |
+| `kav completions` | always | — | — |
+| `kav man` | always | — | — |
+
+Designed for scripting: `kav check 3000 && echo "server is up"` or `kav kill 3000 || echo "nothing to kill"`.
+
 ## TUI Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | `↑/↓` or `j/k` | Navigate |
+| `Home` / `End` | Jump to top / bottom |
 | `/` | Filter by port, name, or service |
 | `Ctrl+X` | Kill selected process (with confirmation) |
 | `Ctrl+K` | Force kill (SIGKILL, with confirmation) |
 | `Ctrl+D` | Toggle detail pane |
 | `Ctrl+S` | Cycle sort (Port → Name → CPU → Mem) |
-| `Ctrl+T` | Toggle TCP/UDP filter |
+| `Ctrl+T` | Cycle TCP/UDP filter |
 | `Ctrl+R` | Force refresh |
 | `PgUp/PgDn` | Scroll detail pane |
 | `Ctrl+Q` / `Esc` | Quit |
+| `?` | Show keyboard shortcut help |
 
 ## Privacy
 

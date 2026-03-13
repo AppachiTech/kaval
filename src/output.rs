@@ -1,10 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 use anyhow::Result;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 
-use crate::models::{self, ServiceCategory, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
+use crate::models::{
+    self, count_browser_groups, dedup_browser_indices, ServiceCategory, CPU_ERROR_THRESHOLD,
+    CPU_WARN_THRESHOLD,
+};
 use crate::theme::theme;
 
 /// Helper to conditionally emit ANSI color/attribute codes
@@ -50,28 +53,10 @@ pub fn print_table(entries: &[models::PortEntry], color: bool) {
         return;
     }
 
-    // Count browser entries per (pid, service) and deduplicate
-    let mut browser_counts: HashMap<(u32, &str), usize> = HashMap::new();
-    for e in entries {
-        if e.category == ServiceCategory::Browser {
-            if let Some(svc) = e.known_service {
-                *browser_counts.entry((e.pid, svc)).or_insert(0) += 1;
-            }
-        }
-    }
-
-    // Build deduplicated list: keep first browser entry per (pid, service)
-    let mut browser_seen: HashSet<(u32, &str)> = HashSet::new();
-    let display_entries: Vec<&models::PortEntry> = entries
-        .iter()
-        .filter(|e| {
-            if e.category == ServiceCategory::Browser {
-                if let Some(svc) = e.known_service {
-                    return browser_seen.insert((e.pid, svc));
-                }
-            }
-            true
-        })
+    let browser_counts = count_browser_groups(entries);
+    let display_entries: Vec<&models::PortEntry> = dedup_browser_indices(entries, &browser_counts)
+        .into_iter()
+        .map(|i| &entries[i])
         .collect();
 
     let opts = TableOptions {

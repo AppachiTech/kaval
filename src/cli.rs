@@ -21,6 +21,16 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// List all listening ports (one-shot table output)
+    ///
+    /// Prints a table of all listening TCP and UDP ports with process name,
+    /// PID, CPU, memory, and uptime. Exits 0 always.
+    #[command(long_about = "List all listening ports (one-shot table output).
+
+Prints a table of all listening TCP and UDP ports with process name, PID, CPU, memory,
+and uptime. Combine with --sort and --filter for scripting.
+
+Exit codes:
+  0  Always (even if no ports are listening)")]
     List {
         /// Output as JSON
         #[arg(long)]
@@ -36,6 +46,16 @@ pub enum Command {
     },
 
     /// Check what's running on specific port(s)
+    ///
+    /// Exits 0 if at least one port is active, 1 if none are active.
+    #[command(long_about = "Check what's running on specific port(s).
+
+Prints a table of matching ports. When checking multiple ports, prints a summary
+line ('N of M ports active').
+
+Exit codes:
+  0  At least one requested port is active
+  1  No requested ports are active (useful for scripting)")]
     Check {
         /// Port number(s) to check
         #[arg(required = true)]
@@ -43,6 +63,17 @@ pub enum Command {
     },
 
     /// Kill the process(es) listening on port(s)
+    ///
+    /// Exits 0 if at least one process was killed, 1 if nothing was listening.
+    #[command(long_about = "Kill the process(es) listening on port(s).
+
+Sends SIGTERM by default. Use --force for SIGKILL. Prompts for confirmation
+when running in an interactive terminal unless --yes or --force is passed.
+
+Exit codes:
+  0  At least one process was killed
+  1  Nothing was listening on any of the requested ports
+  2  Kill failed (e.g. permission denied — try sudo)")]
     Kill {
         /// Port number(s) whose processes to kill
         #[arg(required = true)]
@@ -58,6 +89,9 @@ pub enum Command {
     },
 
     /// Print shell completion script for the given shell
+    ///
+    /// Pipe the output to your shell's completion directory.
+    /// Exits 0 always.
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
@@ -65,6 +99,9 @@ pub enum Command {
     },
 
     /// Print a man page for kav to stdout
+    ///
+    /// Pipe to a file or directly to man: kav man | man -l -
+    /// Exits 0 always.
     Man,
 }
 
