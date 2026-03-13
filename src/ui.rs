@@ -52,7 +52,7 @@ impl App {
             show_tcp: true,
             show_udp: true,
             sort_field: SortField::Port,
-            show_detail: false,
+            show_detail: true,
             confirm_kill: None, // (index, force)
             status_msg: None,
             should_quit: false,
@@ -327,6 +327,8 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 app.filter_active = false;
+                app.filter_text.clear();
+                app.apply_filter();
             }
             KeyCode::Enter => {
                 app.filter_active = false;

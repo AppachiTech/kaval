@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "kav",
     about = "Kaval — Guard your ports. A developer-focused port and process manager TUI.",
-    version,
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("BUILD_DATE"), ")"),
     long_about = None
 )]
 pub struct Cli {
