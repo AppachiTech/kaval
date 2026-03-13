@@ -111,6 +111,30 @@ fn cli_list_filter_with_sort() {
 }
 
 #[test]
+fn cli_list_filter_numeric_is_exact_port() {
+    // "5432" should not match port 54321, "80" should not match 8080
+    // We can't assert specific ports are present/absent (depends on system state),
+    // but we can assert the command succeeds and produces valid JSON
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--json", "--filter", "80"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Every port in output must be exactly 80 (if any results)
+    for line in stdout.lines() {
+        if line.contains("\"port\":") {
+            let has_port_80 = line.contains("\"port\":80,");
+            let has_other = line.contains("\"port\":8") || line.contains("\"port\":3800");
+            if has_other {
+                panic!("Substring-matched a non-80 port: {}", line);
+            }
+            let _ = has_port_80; // silence unused warning
+        }
+    }
+}
+
+#[test]
 fn cli_list_filter_json_combo() {
     let output = Command::new(env!("CARGO_BIN_EXE_kav"))
         .args(["list", "--json", "--filter", "zzzunlikelyservice"])

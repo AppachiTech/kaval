@@ -15,6 +15,17 @@ use cli::{Cli, Command};
 use models::{sort_entries, SortField};
 use scanner::{kill_process, new_system_with_cpu, scan_ports};
 
+/// Match a port against a query string.
+/// If the query is a valid u16, require an exact port match.
+/// Otherwise treat it as a case-insensitive substring of the port string.
+fn port_matches(port: u16, query: &str) -> bool {
+    if let Ok(p) = query.parse::<u16>() {
+        port == p
+    } else {
+        port.to_string().contains(query)
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -31,7 +42,7 @@ fn main() -> Result<()> {
             if let Some(ref pattern) = filter {
                 let q = pattern.to_lowercase();
                 entries.retain(|e| {
-                    e.port.to_string().contains(&q)
+                    port_matches(e.port, &q)
                         || e.process_name.to_lowercase().contains(&q)
                         || e.known_service
                             .map(|s| s.to_lowercase().contains(&q))

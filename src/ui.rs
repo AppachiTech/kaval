@@ -112,7 +112,7 @@ impl App {
             .enumerate()
             .filter(|(_, e)| {
                 if !query.is_empty()
-                    && !e.port.to_string().contains(&query)
+                    && !port_matches(e.port, &query)
                     && !e.process_name.to_lowercase().contains(&query)
                     && !e
                         .known_service
@@ -167,6 +167,16 @@ impl App {
             self.detail_scroll = 0;
         }
         self.table_state.select(Some(new));
+    }
+}
+
+/// Match a port against a query string.
+/// Exact match when the query is a valid u16; substring fallback otherwise.
+fn port_matches(port: u16, query: &str) -> bool {
+    if let Ok(p) = query.parse::<u16>() {
+        port == p
+    } else {
+        port.to_string().contains(query)
     }
 }
 
@@ -843,22 +853,17 @@ mod tests {
     }
 
     #[test]
-    fn filter_by_partial_port() {
+    fn filter_by_partial_port_is_exact_match() {
+        // "300" is a valid u16 — must match only port 300, not 3000 or 3001
         let mut app = app_with_entries(vec![
+            make_entry(300, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
             make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
             make_entry(3001, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
-            make_entry(
-                5432,
-                "postgres",
-                None,
-                ServiceCategory::Database,
-                0.0,
-                200.0,
-            ),
         ]);
         app.filter_text = "300".to_string();
         app.apply_filter();
-        assert_eq!(app.filtered.len(), 2);
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].port, 300);
     }
 
     #[test]
@@ -904,6 +909,59 @@ mod tests {
         app.apply_filter();
         assert_eq!(app.filtered.len(), 1);
         assert_eq!(app.entries[app.filtered[0]].known_service, Some("Next.js"));
+    }
+
+    // --- port_matches unit tests ---
+
+    #[test]
+    fn port_matches_exact_numeric() {
+        assert!(port_matches(80, "80"));
+        assert!(port_matches(5432, "5432"));
+        assert!(!port_matches(8080, "80")); // must NOT substring-match
+        assert!(!port_matches(3800, "80"));
+        assert!(!port_matches(18080, "80"));
+    }
+
+    #[test]
+    fn port_matches_non_numeric_query_does_not_match_port() {
+        // Non-numeric queries (e.g. service names) never match a port number —
+        // they fall through to process name / service matching instead.
+        assert!(!port_matches(3000, "node"));
+        assert!(!port_matches(5432, "postgres"));
+        assert!(!port_matches(80, "http"));
+    }
+
+    #[test]
+    fn filter_by_exact_port_not_substring() {
+        let mut app = app_with_entries(vec![
+            make_entry(80, "nginx", None, ServiceCategory::System, 0.0, 100.0),
+            make_entry(8080, "caddy", None, ServiceCategory::System, 0.0, 100.0),
+            make_entry(3800, "node", None, ServiceCategory::DevServer, 0.0, 100.0),
+        ]);
+        app.filter_text = "80".to_string();
+        app.apply_filter();
+        // Only port 80 — not 8080 or 3800
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].port, 80);
+    }
+
+    #[test]
+    fn filter_by_exact_port_5432_not_54321() {
+        let mut app = app_with_entries(vec![
+            make_entry(
+                5432,
+                "postgres",
+                Some("PostgreSQL"),
+                ServiceCategory::Database,
+                0.0,
+                200.0,
+            ),
+            make_entry(54321, "custom", None, ServiceCategory::Unknown, 0.0, 50.0),
+        ]);
+        app.filter_text = "5432".to_string();
+        app.apply_filter();
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.entries[app.filtered[0]].port, 5432);
     }
 
     #[test]
