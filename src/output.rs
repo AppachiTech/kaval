@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use anyhow::Result;
 use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 
-use crate::models::{self, ServiceCategory};
+use crate::models::{self, ServiceCategory, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
 use crate::theme::theme;
 
 /// Helper to conditionally emit ANSI color/attribute codes
@@ -203,9 +203,9 @@ fn print_rows(
 
         let _ = write!(w, "{} {:<7}", a.fg(dim), e.pid);
         let cpu_str = format!("{:.1}%", e.cpu_percent);
-        let cpu_col = if e.cpu_percent > 50.0 {
+        let cpu_col = if e.cpu_percent > CPU_ERROR_THRESHOLD {
             error
-        } else if e.cpu_percent > 10.0 {
+        } else if e.cpu_percent > CPU_WARN_THRESHOLD {
             warning
         } else {
             dim
@@ -233,7 +233,10 @@ fn print_rows(
             .iter()
             .filter(|e| e.protocol == models::Protocol::Tcp)
             .count();
-        let udp = total_count - tcp;
+        let udp = entries
+            .iter()
+            .filter(|e| e.protocol == models::Protocol::Udp)
+            .count();
         let services = entries.iter().filter(|e| e.known_service.is_some()).count();
         let _ = write!(
             w,

@@ -2,6 +2,10 @@ use std::fmt;
 use std::net::IpAddr;
 use std::time::Duration;
 
+/// CPU% thresholds shared between CLI output and TUI rendering
+pub const CPU_WARN_THRESHOLD: f32 = 20.0;
+pub const CPU_ERROR_THRESHOLD: f32 = 50.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     Tcp,

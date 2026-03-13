@@ -91,11 +91,13 @@ fn main() -> Result<()> {
             let mut sys = new_system_with_cpu();
             let entries = scan_ports(&mut sys, true, true)?;
             let mut killed_pids: HashSet<u32> = HashSet::new();
+            let mut any_found = false;
             for port in &ports {
                 let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
                 if matches.is_empty() {
                     println!("Nothing listening on port {}", port);
                 } else {
+                    any_found = true;
                     for entry in &matches {
                         // Skip if we already killed this PID (same process on multiple ports)
                         if !killed_pids.insert(entry.pid) {
@@ -116,6 +118,9 @@ fn main() -> Result<()> {
                         );
                     }
                 }
+            }
+            if !any_found {
+                std::process::exit(1);
             }
         }
     }

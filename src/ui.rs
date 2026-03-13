@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use sysinfo::System;
 
-use crate::models::{PortEntry, ServiceCategory, SortField};
+use crate::models::{PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
 
@@ -39,7 +39,7 @@ struct App {
     sort_field: SortField,
     show_detail: bool,
     detail_scroll: u16,
-    confirm_kill: Option<(usize, bool)>, // (index, force) of entry to confirm kill
+    confirm_kill: Option<(u32, String, u16, bool)>, // (pid, name, port, force)
     status_msg: Option<(String, Instant)>,
     should_quit: bool,
 }
@@ -62,7 +62,7 @@ impl App {
             sort_field: SortField::Port,
             show_detail: true,
             detail_scroll: 0,
-            confirm_kill: None, // (index, force)
+            confirm_kill: None,
             status_msg: None,
             should_quit: false,
         }
@@ -241,13 +241,9 @@ pub fn run_tui() -> Result<()> {
 
 fn handle_key(app: &mut App, key: KeyEvent) {
     // Kill confirmation dialog takes priority
-    if let Some((idx, force)) = app.confirm_kill {
+    if let Some((pid, ref name, port, force)) = app.confirm_kill.clone() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let entry = &app.entries[app.filtered[idx]];
-                let pid = entry.pid;
-                let name = entry.process_name.clone();
-                let port = entry.port;
                 match kill_process(&app.sys, pid, force) {
                     Ok(()) => {
                         app.status_msg = Some((
@@ -283,19 +279,21 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Char('x') => {
-                // Kill with confirmation
+                // Kill with confirmation — snapshot PID/name/port now to avoid stale index
                 if let Some(selected) = app.table_state.selected() {
-                    if selected < app.filtered.len() {
-                        app.confirm_kill = Some((selected, false));
+                    if let Some(&idx) = app.filtered.get(selected) {
+                        let e = &app.entries[idx];
+                        app.confirm_kill = Some((e.pid, e.process_name.clone(), e.port, false));
                     }
                 }
                 return;
             }
             KeyCode::Char('k') => {
-                // Force kill (SIGKILL), with confirmation
+                // Force kill (SIGKILL), with confirmation — snapshot PID/name/port now
                 if let Some(selected) = app.table_state.selected() {
-                    if selected < app.filtered.len() {
-                        app.confirm_kill = Some((selected, true));
+                    if let Some(&idx) = app.filtered.get(selected) {
+                        let e = &app.entries[idx];
+                        app.confirm_kill = Some((e.pid, e.process_name.clone(), e.port, true));
                     }
                 }
                 return;
@@ -410,11 +408,8 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_status_bar(f, app, chunks[2]);
 
     // Kill confirmation overlay
-    if let Some((idx, force)) = app.confirm_kill {
-        if let Some(&entry_idx) = app.filtered.get(idx) {
-            let entry = &app.entries[entry_idx];
-            draw_kill_confirm(f, entry, force);
-        }
+    if let Some((pid, ref name, port, force)) = app.confirm_kill {
+        draw_kill_confirm(f, pid, name, port, force);
     }
 }
 
@@ -494,9 +489,9 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|&idx| {
             let e = &app.entries[idx];
             let cat_color = t.category_color(e.category);
-            let cpu_color = if e.cpu_percent > 50.0 {
+            let cpu_color = if e.cpu_percent > CPU_ERROR_THRESHOLD {
                 t.error
-            } else if e.cpu_percent > 20.0 {
+            } else if e.cpu_percent > CPU_WARN_THRESHOLD {
                 t.warning
             } else {
                 t.text
@@ -710,7 +705,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(shortcuts), area);
 }
 
-fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry, force: bool) {
+fn draw_kill_confirm(f: &mut Frame, pid: u32, name: &str, port: u16, force: bool) {
     let t = theme();
     let area = f.area();
 
@@ -738,11 +733,11 @@ fn draw_kill_confirm(f: &mut Frame, entry: &PortEntry, force: bool) {
                 Style::default().fg(t.error).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                entry.process_name.to_string(),
+                name.to_string(),
                 Style::default().fg(t.text).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" (PID {}) on port {}?", entry.pid, entry.port),
+                format!(" (PID {}) on port {}?", pid, port),
                 Style::default().fg(t.text_secondary),
             ),
         ]),
