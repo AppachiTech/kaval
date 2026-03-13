@@ -76,12 +76,16 @@ impl App {
                     .to_lowercase()
                     .cmp(&b.process_name.to_lowercase())
             }),
-            SortField::Cpu => self
-                .entries
-                .sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap()),
-            SortField::Memory => self
-                .entries
-                .sort_by(|a, b| b.memory_mb.partial_cmp(&a.memory_mb).unwrap()),
+            SortField::Cpu => self.entries.sort_by(|a, b| {
+                b.cpu_percent
+                    .partial_cmp(&a.cpu_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            SortField::Memory => self.entries.sort_by(|a, b| {
+                b.memory_mb
+                    .partial_cmp(&a.memory_mb)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
     }
 
