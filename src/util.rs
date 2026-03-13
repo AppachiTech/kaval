@@ -24,6 +24,12 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
     if name.contains("mongod") || name.contains("mongos") {
         return Some((Some("MongoDB"), ServiceCategory::Database));
     }
+    if name.contains("clickhouse") {
+        return Some((Some("ClickHouse"), ServiceCategory::Database));
+    }
+    if name.contains("elasticsearch") || name.contains("opensearch") {
+        return Some((Some("Elasticsearch"), ServiceCategory::Database));
+    }
 
     // Cache / message brokers
     if name.contains("redis-server") || name == "redis" {
@@ -31,6 +37,15 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
     }
     if name.contains("memcached") {
         return Some((Some("Memcached"), ServiceCategory::Cache));
+    }
+    if name.contains("kafka") {
+        return Some((Some("Kafka"), ServiceCategory::Cache));
+    }
+    if name.contains("rabbitmq") || name.contains("beam.smp") {
+        return Some((Some("RabbitMQ"), ServiceCategory::Cache));
+    }
+    if name.contains("nats-server") || name == "nats" {
+        return Some((Some("NATS"), ServiceCategory::Cache));
     }
 
     // Containers
@@ -40,10 +55,25 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
     if name.contains("colima") {
         return Some((Some("Colima"), ServiceCategory::Container));
     }
+    if name.contains("kubectl") || name.contains("kubelet") {
+        return Some((Some("Kubernetes"), ServiceCategory::Container));
+    }
 
-    // Dev tools
+    // Dev tools / runtimes
+    if name == "bun" || name.starts_with("bun ") {
+        return Some((Some("Bun"), ServiceCategory::DevServer));
+    }
+    if name == "deno" || name.starts_with("deno ") {
+        return Some((Some("Deno"), ServiceCategory::DevServer));
+    }
     if name.contains("ollama") {
         return Some((Some("Ollama"), ServiceCategory::DevServer));
+    }
+    if name.contains("supabase") {
+        return Some((Some("Supabase"), ServiceCategory::DevServer));
+    }
+    if name.contains("minio") {
+        return Some((Some("MinIO"), ServiceCategory::Database));
     }
     if name.contains("code helper") || name.starts_with("code - ") {
         return Some((Some("VS Code"), ServiceCategory::DevServer));
@@ -100,6 +130,15 @@ fn identify_by_process_name(name: &str) -> Option<(Option<&'static str>, Service
     if name.contains("caddy") {
         return Some((Some("Caddy"), ServiceCategory::System));
     }
+    if name.contains("traefik") {
+        return Some((Some("Traefik"), ServiceCategory::System));
+    }
+    if name.contains("envoy") {
+        return Some((Some("Envoy"), ServiceCategory::System));
+    }
+    if name.contains("haproxy") {
+        return Some((Some("HAProxy"), ServiceCategory::System));
+    }
 
     None
 }
@@ -125,6 +164,9 @@ fn identify_by_port(port: u16) -> (Option<&'static str>, ServiceCategory) {
         5433 => (Some("PostgreSQL Alt"), ServiceCategory::Database),
         27017 => (Some("MongoDB"), ServiceCategory::Database),
         26257 => (Some("CockroachDB"), ServiceCategory::Database),
+        9200 => (Some("Elasticsearch"), ServiceCategory::Database),
+        8123 | 9004 => (Some("ClickHouse"), ServiceCategory::Database),
+        9100 => (Some("MinIO"), ServiceCategory::Database),
 
         // Cache / brokers
         6379 => (Some("Redis"), ServiceCategory::Cache),
@@ -132,6 +174,7 @@ fn identify_by_port(port: u16) -> (Option<&'static str>, ServiceCategory) {
         9092 => (Some("Kafka"), ServiceCategory::Cache),
         5672 => (Some("RabbitMQ"), ServiceCategory::Cache),
         15672 => (Some("RabbitMQ UI"), ServiceCategory::Cache),
+        4222 => (Some("NATS"), ServiceCategory::Cache),
 
         // Container / orchestration
         2375 | 2376 => (Some("Docker"), ServiceCategory::Container),
@@ -353,6 +396,120 @@ mod tests {
 
         let (svc, _) = identify_service(9999, "NGINX");
         assert_eq!(svc, Some("Nginx"));
+    }
+
+    // --- New services ---
+
+    #[test]
+    fn identifies_bun() {
+        let (svc, cat) = identify_service(9999, "bun");
+        assert_eq!(svc, Some("Bun"));
+        assert_eq!(cat, ServiceCategory::DevServer);
+    }
+
+    #[test]
+    fn identifies_deno() {
+        let (svc, cat) = identify_service(9999, "deno");
+        assert_eq!(svc, Some("Deno"));
+        assert_eq!(cat, ServiceCategory::DevServer);
+    }
+
+    #[test]
+    fn identifies_supabase() {
+        let (svc, cat) = identify_service(9999, "supabase");
+        assert_eq!(svc, Some("Supabase"));
+        assert_eq!(cat, ServiceCategory::DevServer);
+    }
+
+    #[test]
+    fn identifies_minio() {
+        let (svc, cat) = identify_service(9999, "minio");
+        assert_eq!(svc, Some("MinIO"));
+        assert_eq!(cat, ServiceCategory::Database);
+    }
+
+    #[test]
+    fn identifies_clickhouse() {
+        let (svc, cat) = identify_service(9999, "clickhouse-server");
+        assert_eq!(svc, Some("ClickHouse"));
+        assert_eq!(cat, ServiceCategory::Database);
+    }
+
+    #[test]
+    fn identifies_elasticsearch() {
+        let (svc, cat) = identify_service(9999, "elasticsearch");
+        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(cat, ServiceCategory::Database);
+    }
+
+    #[test]
+    fn identifies_opensearch() {
+        let (svc, cat) = identify_service(9999, "opensearch");
+        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(cat, ServiceCategory::Database);
+    }
+
+    #[test]
+    fn identifies_traefik() {
+        let (svc, cat) = identify_service(9999, "traefik");
+        assert_eq!(svc, Some("Traefik"));
+        assert_eq!(cat, ServiceCategory::System);
+    }
+
+    #[test]
+    fn identifies_envoy() {
+        let (svc, cat) = identify_service(9999, "envoy");
+        assert_eq!(svc, Some("Envoy"));
+        assert_eq!(cat, ServiceCategory::System);
+    }
+
+    #[test]
+    fn identifies_haproxy() {
+        let (svc, cat) = identify_service(9999, "haproxy");
+        assert_eq!(svc, Some("HAProxy"));
+        assert_eq!(cat, ServiceCategory::System);
+    }
+
+    #[test]
+    fn identifies_kafka_by_name() {
+        let (svc, cat) = identify_service(9999, "kafka");
+        assert_eq!(svc, Some("Kafka"));
+        assert_eq!(cat, ServiceCategory::Cache);
+    }
+
+    #[test]
+    fn identifies_rabbitmq_by_name() {
+        let (svc, cat) = identify_service(9999, "rabbitmq-server");
+        assert_eq!(svc, Some("RabbitMQ"));
+        assert_eq!(cat, ServiceCategory::Cache);
+    }
+
+    #[test]
+    fn identifies_nats() {
+        let (svc, cat) = identify_service(9999, "nats-server");
+        assert_eq!(svc, Some("NATS"));
+        assert_eq!(cat, ServiceCategory::Cache);
+    }
+
+    #[test]
+    fn identifies_kubernetes() {
+        let (svc, cat) = identify_service(9999, "kubelet");
+        assert_eq!(svc, Some("Kubernetes"));
+        assert_eq!(cat, ServiceCategory::Container);
+    }
+
+    #[test]
+    fn identifies_port_9200_elasticsearch() {
+        let (svc, cat) = identify_service(9200, "unknown");
+        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(cat, ServiceCategory::Database);
+    }
+
+    #[test]
+    fn identifies_port_8123_clickhouse() {
+        let (svc, cat) = identify_service(8123, "unknown");
+        assert_eq!(svc, Some("ClickHouse"));
+        assert_eq!(cat, ServiceCategory::Database);
     }
 
     // --- Unknown ---

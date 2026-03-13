@@ -10,7 +10,7 @@ Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows all listening ports, map
 ## Features
 
 - **See everything at a glance** — all listening ports with process name, PID, CPU, memory, uptime
-- **Smart service detection** — recognizes Vite, Next.js, PostgreSQL, Redis, Django, Docker, and 30+ more
+- **Smart service detection** — recognizes Vite, Next.js, PostgreSQL, Redis, Django, Docker, Elasticsearch, and 40+ more
 - **Interactive TUI** — filter, sort, navigate, kill processes — all from one screen
 - **One-shot commands** — `kav list`, `kav check 3000`, `kav kill 3000` for scripting
 - **JSON output** — `kav list --json` for piping to other tools
@@ -36,6 +36,12 @@ sudo mv kav /usr/local/bin/
 ```sh
 curl -sL https://downloads.appachi.tech/linux/kav-linux-latest.tar.gz | tar xz
 sudo mv kav /usr/local/bin/
+```
+
+**Cargo (crates.io):**
+
+```sh
+cargo install kaval
 ```
 
 **Build from source:**
