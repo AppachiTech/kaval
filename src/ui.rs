@@ -29,6 +29,17 @@ use crate::theme::theme;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
+// Table column widths (characters). Changing these affects both the header and rows.
+// COL_PROCESS is 20 to fit "Google Chrome Helper" (20 chars) without truncation.
+const COL_PORT: u16 = 7;
+const COL_PROTO: u16 = 6;
+const COL_PROCESS: u16 = 20;
+const COL_SERVICE: u16 = 16;
+const COL_PID: u16 = 7;
+const COL_CPU: u16 = 7;
+const COL_MEM: u16 = 9;
+const COL_UPTIME: u16 = 8;
+
 struct App {
     sys: System,
     entries: Vec<PortEntry>,
@@ -546,14 +557,14 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(7),  // PORT
-        Constraint::Length(6),  // PROTO
-        Constraint::Length(14), // PROCESS
-        Constraint::Length(16), // SERVICE
-        Constraint::Length(7),  // PID
-        Constraint::Length(7),  // CPU
-        Constraint::Length(9),  // MEM
-        Constraint::Length(8),  // UPTIME
+        Constraint::Length(COL_PORT),
+        Constraint::Length(COL_PROTO),
+        Constraint::Length(COL_PROCESS),
+        Constraint::Length(COL_SERVICE),
+        Constraint::Length(COL_PID),
+        Constraint::Length(COL_CPU),
+        Constraint::Length(COL_MEM),
+        Constraint::Length(COL_UPTIME),
     ];
 
     let table = Table::new(rows, widths)
@@ -577,7 +588,8 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let t = theme();
 
     let content = if let Some(entry) = app.selected_entry() {
-        vec![
+        let exited = entry.process_name == "<exited>";
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled("Port: ", Style::default().fg(t.text_secondary)),
                 Span::styled(
@@ -593,7 +605,11 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Process: ", Style::default().fg(t.text_secondary)),
                 Span::styled(
                     &entry.process_name,
-                    Style::default().fg(t.category_color(entry.category)),
+                    Style::default().fg(if exited {
+                        t.text_muted
+                    } else {
+                        t.category_color(entry.category)
+                    }),
                 ),
             ]),
             Line::from(vec![
@@ -608,31 +624,47 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("CPU: ", Style::default().fg(t.text_secondary)),
-                Span::styled(
-                    format!("{:.1}%", entry.cpu_percent),
-                    Style::default().fg(t.text),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Memory: ", Style::default().fg(t.text_secondary)),
-                Span::styled(entry.memory_display(), Style::default().fg(t.text)),
-            ]),
-            Line::from(vec![
-                Span::styled("Uptime: ", Style::default().fg(t.text_secondary)),
-                Span::styled(entry.uptime_display(), Style::default().fg(t.text)),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Command:",
-                Style::default().fg(t.text_secondary),
-            )),
-            Line::from(Span::styled(
-                &entry.process_cmd,
+        ];
+
+        if exited {
+            lines.push(Line::from(Span::styled(
+                "Process exited during scan. The socket was still",
                 Style::default().fg(t.text_muted),
-            )),
-        ]
+            )));
+            lines.push(Line::from(Span::styled(
+                "open when ports were enumerated. Refresh to clear.",
+                Style::default().fg(t.text_muted),
+            )));
+        } else {
+            lines.extend([
+                Line::from(vec![
+                    Span::styled("CPU: ", Style::default().fg(t.text_secondary)),
+                    Span::styled(
+                        format!("{:.1}%", entry.cpu_percent),
+                        Style::default().fg(t.text),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("Memory: ", Style::default().fg(t.text_secondary)),
+                    Span::styled(entry.memory_display(), Style::default().fg(t.text)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Uptime: ", Style::default().fg(t.text_secondary)),
+                    Span::styled(entry.uptime_display(), Style::default().fg(t.text)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Command:",
+                    Style::default().fg(t.text_secondary),
+                )),
+                Line::from(Span::styled(
+                    &entry.process_cmd,
+                    Style::default().fg(t.text_muted),
+                )),
+            ]);
+        }
+
+        lines
     } else {
         vec![Line::from(Span::styled(
             "No port selected",
@@ -671,6 +703,29 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             f.render_widget(Paragraph::new(line), area);
             return;
         }
+    }
+
+    // Filter mode: replace shortcuts with contextual hint
+    if app.filter_active {
+        let line = Line::from(vec![
+            Span::styled(
+                " Filter mode",
+                Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" — type to search  ", Style::default().fg(t.text_muted)),
+            Span::styled(
+                "ESC",
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" cancel  ", Style::default().fg(t.text_muted)),
+            Span::styled(
+                "Enter",
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" confirm", Style::default().fg(t.text_muted)),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+        return;
     }
 
     let shortcuts = Line::from(vec![

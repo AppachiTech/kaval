@@ -100,7 +100,15 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
                     let up = Duration::from_secs(proc.run_time());
                     (name, cmd, cpu, mem, up)
                 } else {
-                    (String::from("?"), String::new(), 0.0, 0.0, Duration::ZERO)
+                    // Race condition: process exited between socket enumeration
+                    // and process lookup. Use a clear placeholder rather than "?".
+                    (
+                        String::from("<exited>"),
+                        String::new(),
+                        0.0,
+                        0.0,
+                        Duration::ZERO,
+                    )
                 };
 
             entries.push(make_port_entry(
