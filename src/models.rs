@@ -101,12 +101,13 @@ impl PortEntry {
 }
 
 /// Join command-line arguments with shell-style quoting.
-/// Arguments containing spaces are wrapped in double quotes.
+/// Arguments containing spaces or double quotes are wrapped in double quotes,
+/// with inner quotes escaped.
 pub fn shell_join(args: &[String]) -> String {
     args.iter()
         .map(|a| {
-            if a.contains(' ') {
-                format!("\"{}\"", a)
+            if a.contains(' ') || a.contains('"') {
+                format!("\"{}\"", a.replace('"', "\\\""))
             } else {
                 a.clone()
             }
@@ -397,6 +398,18 @@ mod tests {
     fn shell_join_empty() {
         let args: Vec<String> = vec![];
         assert_eq!(shell_join(&args), "");
+    }
+
+    #[test]
+    fn shell_join_escapes_inner_quotes() {
+        let args = vec!["node".to_string(), "file\"name with space.js".to_string()];
+        assert_eq!(shell_join(&args), r#"node "file\"name with space.js""#);
+    }
+
+    #[test]
+    fn shell_join_quotes_only_no_space() {
+        let args = vec!["echo".to_string(), "say\"hello".to_string()];
+        assert_eq!(shell_join(&args), r#"echo "say\"hello""#);
     }
 
     #[test]
