@@ -420,6 +420,9 @@ mod tests {
             "my module".to_string(),
             "--flag".to_string(),
         ];
-        assert_eq!(shell_join(&args), r#"/usr/bin/python3 -m "my module" --flag"#);
+        assert_eq!(
+            shell_join(&args),
+            r#"/usr/bin/python3 -m "my module" --flag"#
+        );
     }
 }

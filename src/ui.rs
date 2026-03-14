@@ -315,28 +315,25 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     // Kill confirmation dialog takes priority
     if let Some((pid, name, port, force)) = app.confirm_kill.take() {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                match kill_process(&app.sys, pid, force) {
-                    Ok(()) => {
-                        app.status_msg = Some((
-                            format!(
-                                "{}Killed {} (PID {}) on port {}",
-                                if force { "Force " } else { "" },
-                                name,
-                                pid,
-                                port
-                            ),
-                            Instant::now(),
-                            false,
-                        ));
-                        app.refresh();
-                    }
-                    Err(e) => {
-                        app.status_msg =
-                            Some((format!("Kill failed: {}", e), Instant::now(), true));
-                    }
+            KeyCode::Char('y') | KeyCode::Char('Y') => match kill_process(&app.sys, pid, force) {
+                Ok(()) => {
+                    app.status_msg = Some((
+                        format!(
+                            "{}Killed {} (PID {}) on port {}",
+                            if force { "Force " } else { "" },
+                            name,
+                            pid,
+                            port
+                        ),
+                        Instant::now(),
+                        false,
+                    ));
+                    app.refresh();
                 }
-            }
+                Err(e) => {
+                    app.status_msg = Some((format!("Kill failed: {}", e), Instant::now(), true));
+                }
+            },
             _ => {}
         }
         return;
@@ -466,8 +463,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             if let Some(entry) = app.selected_entry() {
                 let url = format!("http://localhost:{}", entry.port);
                 if open_in_browser(&url) {
-                    app.status_msg =
-                        Some((format!("Opening {}", url), Instant::now(), false));
+                    app.status_msg = Some((format!("Opening {}", url), Instant::now(), false));
                 } else {
                     app.status_msg =
                         Some(("Browser not available".to_string(), Instant::now(), true));
@@ -478,8 +474,11 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             if let Some(entry) = app.selected_entry() {
                 let text = entry.port.to_string();
                 if clipboard_copy(&text) {
-                    app.status_msg =
-                        Some((format!("Copied port {} to clipboard", text), Instant::now(), false));
+                    app.status_msg = Some((
+                        format!("Copied port {} to clipboard", text),
+                        Instant::now(),
+                        false,
+                    ));
                 } else {
                     app.status_msg = Some((
                         "Clipboard unavailable (pbcopy/xclip/xsel not found)".to_string(),

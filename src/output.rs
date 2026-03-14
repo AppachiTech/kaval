@@ -85,11 +85,7 @@ pub fn print_check_table(entries: &[&models::PortEntry], color: bool) {
     print_rows(entries, color, &opts);
 }
 
-fn print_rows(
-    entries: &[&models::PortEntry],
-    color: bool,
-    opts: &TableOptions,
-) {
+fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) {
     let t = theme();
     let a = Ansi(color);
     let out = io::stdout();
