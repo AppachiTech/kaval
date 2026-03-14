@@ -74,6 +74,7 @@ kav                       # Launch interactive TUI
 kav list                  # Print all listening ports
 kav list --json           # JSON output
 kav list --sort cpu       # Sort by CPU usage (port, name, cpu, mem)
+kav list --tcp            # Show only TCP ports
 kav list --watch          # Refresh in-place every 2s (Ctrl+C to exit)
 kav list -w -f postgres   # Watch filtered to postgres only
 kav check 3000            # What's on port 3000?

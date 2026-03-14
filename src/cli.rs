@@ -40,7 +40,7 @@ Exit codes:
         #[arg(long, value_enum)]
         sort: Option<SortField>,
 
-        /// Filter by port number, process name, or service (case-insensitive substring)
+        /// Filter by port number (exact), process name, or service (case-insensitive substring)
         #[arg(long, short = 'f')]
         filter: Option<String>,
 
