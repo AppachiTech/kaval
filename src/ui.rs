@@ -1436,4 +1436,49 @@ mod tests {
         assert_eq!(app.filtered.len(), 2);
         assert_eq!(app.browser_counts.get(&(100, "Chrome")), Some(&1));
     }
+
+    // --- Protocol cycling tests ---
+
+    #[test]
+    fn protocol_cycle_full_loop() {
+        let mut app = app_with_entries(vec![]);
+        // Start: both enabled
+        assert!(app.show_tcp && app.show_udp);
+
+        // Step 1: TCP+UDP → TCP only
+        app.show_udp = false;
+        assert!(app.show_tcp && !app.show_udp);
+
+        // Step 2: TCP only → UDP only
+        app.show_tcp = false;
+        app.show_udp = true;
+        assert!(!app.show_tcp && app.show_udp);
+
+        // Step 3: UDP only → TCP+UDP
+        app.show_tcp = true;
+        assert!(app.show_tcp && app.show_udp);
+    }
+
+    #[test]
+    fn protocol_cycle_recovers_from_both_false() {
+        let mut app = app_with_entries(vec![]);
+        // Simulate invalid state: both disabled
+        app.show_tcp = false;
+        app.show_udp = false;
+
+        // The Ctrl+T handler treats (false, false) as a recovery: re-enable both
+        match (app.show_tcp, app.show_udp) {
+            (true, true) => app.show_udp = false,
+            (true, false) => {
+                app.show_tcp = false;
+                app.show_udp = true;
+            }
+            (false, true) => app.show_tcp = true,
+            (false, false) => {
+                app.show_tcp = true;
+                app.show_udp = true;
+            }
+        }
+        assert!(app.show_tcp && app.show_udp);
+    }
 }

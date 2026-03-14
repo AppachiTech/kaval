@@ -199,3 +199,32 @@ fn cli_list_watch_flag_in_help() {
         "--watch flag should appear in list help"
     );
 }
+
+#[test]
+fn cli_list_tcp_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--tcp"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn cli_list_udp_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--udp"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn cli_completions_bash() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["completions", "bash"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.is_empty(), "completions should produce output");
+}
