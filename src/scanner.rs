@@ -124,9 +124,6 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
         }
     }
 
-    // Default sort by port number
-    entries.sort_by_key(|e| e.port);
-
     Ok(entries)
 }
 

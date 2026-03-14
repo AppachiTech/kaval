@@ -195,7 +195,7 @@ fn print_rows(
                 w,
                 "{}    cmd: {}{}",
                 a.fg(dim),
-                truncate(&e.process_cmd.join(" "), 90),
+                truncate(&e.cmd_display(), 90),
                 a.reset()
             );
         }

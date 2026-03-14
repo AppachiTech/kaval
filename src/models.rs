@@ -93,6 +93,26 @@ impl PortEntry {
     pub fn uptime_display(&self) -> String {
         format_uptime(self.uptime)
     }
+
+    /// Format command line with shell-style quoting for arguments containing spaces
+    pub fn cmd_display(&self) -> String {
+        shell_join(&self.process_cmd)
+    }
+}
+
+/// Join command-line arguments with shell-style quoting.
+/// Arguments containing spaces are wrapped in double quotes.
+pub fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.contains(' ') {
+                format!("\"{}\"", a)
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -357,5 +377,36 @@ mod tests {
         assert_eq!(SortField::ProcessName.label(), "Name");
         assert_eq!(SortField::Cpu.label(), "CPU");
         assert_eq!(SortField::Memory.label(), "Mem");
+    }
+
+    // --- shell_join ---
+
+    #[test]
+    fn shell_join_simple_args() {
+        let args = vec!["node".to_string(), "server.js".to_string()];
+        assert_eq!(shell_join(&args), "node server.js");
+    }
+
+    #[test]
+    fn shell_join_quotes_spaces() {
+        let args = vec!["node".to_string(), "my script.js".to_string()];
+        assert_eq!(shell_join(&args), r#"node "my script.js""#);
+    }
+
+    #[test]
+    fn shell_join_empty() {
+        let args: Vec<String> = vec![];
+        assert_eq!(shell_join(&args), "");
+    }
+
+    #[test]
+    fn shell_join_mixed() {
+        let args = vec![
+            "/usr/bin/python3".to_string(),
+            "-m".to_string(),
+            "my module".to_string(),
+            "--flag".to_string(),
+        ];
+        assert_eq!(shell_join(&args), r#"/usr/bin/python3 -m "my module" --flag"#);
     }
 }

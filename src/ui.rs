@@ -109,6 +109,11 @@ impl App {
         // Pre-condition: self.browser_counts must be current.
         // It is recomputed by refresh() after entries change, not here —
         // browser counts depend on entry content, not sort order or filter text.
+        //
+        // Note: we reimplement browser dedup inline rather than calling
+        // `dedup_browser_indices()` from models.rs because this method
+        // interleaves filter-text matching with deduplication in a single
+        // pass. Separating them would require two passes over entries.
         let query = self.filter_text.to_lowercase();
 
         // Track which browser (pid, service) groups we've already included
@@ -308,7 +313,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Kill confirmation dialog takes priority
-    if let Some((pid, ref name, port, force)) = app.confirm_kill.clone() {
+    if let Some((pid, name, port, force)) = app.confirm_kill.take() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 match kill_process(&app.sys, pid, force) {
@@ -331,11 +336,8 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                             Some((format!("Kill failed: {}", e), Instant::now(), true));
                     }
                 }
-                app.confirm_kill = None;
             }
-            _ => {
-                app.confirm_kill = None;
-            }
+            _ => {}
         }
         return;
     }
@@ -766,7 +768,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(t.text_secondary),
                 )),
                 Line::from(Span::styled(
-                    entry.process_cmd.join(" "),
+                    entry.cmd_display(),
                     Style::default().fg(t.text_muted),
                 )),
             ]);
