@@ -55,6 +55,7 @@ struct App {
     detail_scroll: u16,
     confirm_kill: Option<(u32, String, u16, bool)>, // (pid, name, port, force)
     show_help: bool,
+    loading: bool,
     status_msg: Option<(String, Instant)>,
     should_quit: bool,
 }
@@ -79,6 +80,7 @@ impl App {
             detail_scroll: 0,
             confirm_kill: None,
             show_help: false,
+            loading: true,
             status_msg: None,
             should_quit: false,
         }
@@ -96,6 +98,7 @@ impl App {
                 self.status_msg = Some((format!("Scan error: {}", e), Instant::now()));
             }
         }
+        self.loading = false;
     }
 
     fn sort_entries(&mut self) {
@@ -221,6 +224,32 @@ fn clipboard_copy(text: &str) -> bool {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn clipboard_copy(_text: &str) -> bool {
+    false
+}
+
+/// Open a URL in the default browser. Returns true if the command spawned successfully.
+#[cfg(target_os = "macos")]
+fn open_in_browser(url: &str) -> bool {
+    std::process::Command::new("open")
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(target_os = "linux")]
+fn open_in_browser(url: &str) -> bool {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn open_in_browser(_url: &str) -> bool {
     false
 }
 
@@ -436,6 +465,18 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('?') => {
             app.show_help = true;
         }
+        KeyCode::Char('o') => {
+            if let Some(entry) = app.selected_entry() {
+                let url = format!("http://localhost:{}", entry.port);
+                if open_in_browser(&url) {
+                    app.status_msg =
+                        Some((format!("Opening {}", url), Instant::now()));
+                } else {
+                    app.status_msg =
+                        Some(("Browser not available".to_string(), Instant::now()));
+                }
+            }
+        }
         KeyCode::Char('y') => {
             if let Some(entry) = app.selected_entry() {
                 let text = entry.port.to_string();
@@ -546,6 +587,23 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     let t = theme();
+
+    // Show loading indicator on first scan
+    if app.loading && app.filtered.is_empty() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.border));
+        let loading = Paragraph::new(Line::from(Span::styled(
+            "Scanning ports…",
+            Style::default()
+                .fg(t.text_muted)
+                .add_modifier(Modifier::ITALIC),
+        )))
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(loading, area);
+        return;
+    }
 
     let header_cells = [
         "PORT", "PROTO", "PROCESS", "SERVICE", "PID", "CPU", "MEM", "UPTIME",

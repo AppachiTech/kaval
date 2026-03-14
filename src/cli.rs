@@ -47,6 +47,14 @@ Exit codes:
         /// Refresh in-place every 2 seconds. Press Ctrl+C to exit. Incompatible with --json.
         #[arg(long, short = 'w')]
         watch: bool,
+
+        /// Show only TCP ports
+        #[arg(long)]
+        tcp: bool,
+
+        /// Show only UDP ports
+        #[arg(long)]
+        udp: bool,
     },
 
     /// Check what's running on specific port(s)

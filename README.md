@@ -80,6 +80,7 @@ kav check 3000            # What's on port 3000?
 kav check 3000 5432 8080  # Check multiple ports
 kav kill 3000             # Kill process on port 3000
 kav kill 3000 5432 -f     # Force kill on multiple ports
+kav man | man -l -        # View man page inline
 ```
 
 ## Exit Codes
@@ -149,6 +150,7 @@ kav list --json | jq '[.[].port]'
 | `Ctrl+Q` / `Esc` | Quit |
 | `?` | Show keyboard shortcut help |
 | `y` | Yank port number to clipboard |
+| `o` | Open `http://localhost:<port>` in browser |
 
 ## Privacy
 

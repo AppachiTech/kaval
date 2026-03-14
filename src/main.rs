@@ -28,7 +28,12 @@ fn port_matches(port: u16, query: &str) -> bool {
 
 /// Refresh `kav list` output in-place on the same screen.
 /// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
-fn run_watch(sort: Option<SortField>, filter: Option<&str>) -> Result<()> {
+fn run_watch(
+    sort: Option<SortField>,
+    filter: Option<&str>,
+    show_tcp: bool,
+    show_udp: bool,
+) -> Result<()> {
     use crossterm::{cursor, execute, terminal};
 
     let color = io::stdout().is_terminal();
@@ -42,7 +47,7 @@ fn run_watch(sort: Option<SortField>, filter: Option<&str>) -> Result<()> {
         )?;
         println!("kav watch  —  Ctrl+C to exit  —  refreshing every 2s\n");
 
-        let mut entries = scan_ports(&mut sys, true, true)?;
+        let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
         sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
         if let Some(pattern) = filter {
             let q = pattern.to_lowercase();
@@ -69,15 +74,28 @@ fn main() -> Result<()> {
             ui::run_tui()?;
         }
 
-        Some(Command::List { json, sort, filter, watch }) => {
+        Some(Command::List {
+            json,
+            sort,
+            filter,
+            watch,
+            tcp,
+            udp,
+        }) => {
+            // If neither --tcp nor --udp specified, show both (default)
+            let (show_tcp, show_udp) = match (tcp, udp) {
+                (false, false) => (true, true),
+                other => other,
+            };
+
             if watch {
                 if json {
                     anyhow::bail!("--watch and --json are mutually exclusive");
                 }
-                run_watch(sort, filter.as_deref())?;
+                return run_watch(sort, filter.as_deref(), show_tcp, show_udp);
             }
             let mut sys = new_system_with_cpu();
-            let mut entries = scan_ports(&mut sys, true, true)?;
+            let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
             if let Some(ref pattern) = filter {
                 let q = pattern.to_lowercase();
