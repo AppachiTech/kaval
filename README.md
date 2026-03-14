@@ -146,7 +146,7 @@ kav list --json | jq '[.[].port]'
 | `Ctrl+S` | Cycle sort (Port → Name → CPU → Mem) |
 | `Ctrl+T` | Cycle TCP/UDP filter |
 | `Ctrl+R` | Force refresh |
-| `PgUp/PgDn` | Scroll detail pane |
+| `PgUp/PgDn` or `←/→` | Scroll detail pane |
 | `Ctrl+Q` / `Esc` | Quit |
 | `?` | Show keyboard shortcut help |
 | `y` | Yank port number to clipboard |

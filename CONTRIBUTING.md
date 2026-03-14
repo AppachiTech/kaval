@@ -36,14 +36,20 @@ make lint
 
 ```
 src/
-  main.rs      # Entry point, app orchestration
+  main.rs      # Entry point, CLI dispatch
   cli.rs       # clap command definitions
-  models.rs    # Data structures (PortInfo, Protocol, etc.)
+  models.rs    # Data structures (PortEntry, Protocol, SortField, etc.)
   scanner.rs   # Port/process scanning logic
+  output.rs    # CLI table and JSON rendering
   theme.rs     # TUI color theme
   ui.rs        # Interactive TUI (ratatui)
-  util.rs      # Shared utilities
+  util.rs      # Known service detection (PROCESS_RULES / PORT_RULES)
 ```
+
+## Adding a New Service
+
+See the contributor doc block above `PROCESS_RULES` in `src/util.rs` for how to add
+a new service detection rule (match variants, priority, case sensitivity).
 
 ## Reporting Issues
 
