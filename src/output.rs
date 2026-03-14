@@ -43,8 +43,8 @@ struct TableOptions {
     browser_counts: Option<HashMap<(u32, &'static str), usize>>,
     /// Show command line below each row
     show_cmd: bool,
-    /// Show summary footer
-    show_summary: bool,
+    /// Show summary footer with these pre-computed counts (total, tcp, udp)
+    summary_counts: Option<(usize, usize, usize)>,
 }
 
 pub fn print_table(entries: &[models::PortEntry], color: bool) {
@@ -59,28 +59,34 @@ pub fn print_table(entries: &[models::PortEntry], color: bool) {
         .map(|i| &entries[i])
         .collect();
 
+    let total = entries.len();
+    let tcp = entries
+        .iter()
+        .filter(|e| e.protocol == models::Protocol::Tcp)
+        .count();
+    let udp = total - tcp;
+
     let opts = TableOptions {
         browser_counts: Some(browser_counts),
         show_cmd: false,
-        show_summary: true,
+        summary_counts: Some((total, tcp, udp)),
     };
 
-    print_rows(&display_entries, entries.len(), color, &opts);
+    print_rows(&display_entries, color, &opts);
 }
 
 pub fn print_check_table(entries: &[&models::PortEntry], color: bool) {
     let opts = TableOptions {
         browser_counts: None,
         show_cmd: true,
-        show_summary: false,
+        summary_counts: None,
     };
 
-    print_rows(entries, entries.len(), color, &opts);
+    print_rows(entries, color, &opts);
 }
 
 fn print_rows(
     entries: &[&models::PortEntry],
-    total_count: usize,
     color: bool,
     opts: &TableOptions,
 ) {
@@ -202,22 +208,14 @@ fn print_rows(
     }
 
     // Summary footer
-    if opts.show_summary {
-        let tcp = entries
-            .iter()
-            .filter(|e| e.protocol == models::Protocol::Tcp)
-            .count();
-        let udp = entries
-            .iter()
-            .filter(|e| e.protocol == models::Protocol::Udp)
-            .count();
+    if let Some((total, tcp, udp)) = opts.summary_counts {
         let services = entries.iter().filter(|e| e.known_service.is_some()).count();
         let _ = write!(
             w,
             "\n{}{}{} ports{} ({} TCP, {} UDP)",
             a.fg(hdr),
             a.bold(),
-            total_count,
+            total,
             a.reset(),
             tcp,
             udp,
