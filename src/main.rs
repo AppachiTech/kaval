@@ -12,19 +12,8 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
-use models::{sort_entries, SortField};
+use models::{filter_entries, sort_entries, SortField};
 use scanner::{kill_process, new_system_with_cpu, scan_ports};
-
-/// Match a port against a query string.
-/// If the query is a valid u16, require an exact port match.
-/// Otherwise treat it as a case-insensitive substring of the port string.
-fn port_matches(port: u16, query: &str) -> bool {
-    if let Ok(p) = query.parse::<u16>() {
-        port == p
-    } else {
-        port.to_string().contains(query)
-    }
-}
 
 /// Refresh `kav list` output in-place on the same screen.
 /// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
@@ -50,14 +39,7 @@ fn run_watch(
         let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
         sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
         if let Some(pattern) = filter {
-            let q = pattern.to_lowercase();
-            entries.retain(|e| {
-                port_matches(e.port, &q)
-                    || e.process_name.to_lowercase().contains(&q)
-                    || e.known_service
-                        .map(|s| s.to_lowercase().contains(&q))
-                        .unwrap_or(false)
-            });
+            filter_entries(&mut entries, pattern);
         }
         output::print_table(&entries, color);
 
@@ -98,14 +80,7 @@ fn main() -> Result<()> {
             let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
             if let Some(ref pattern) = filter {
-                let q = pattern.to_lowercase();
-                entries.retain(|e| {
-                    port_matches(e.port, &q)
-                        || e.process_name.to_lowercase().contains(&q)
-                        || e.known_service
-                            .map(|s| s.to_lowercase().contains(&q))
-                            .unwrap_or(false)
-                });
+                filter_entries(&mut entries, pattern);
             }
             if json {
                 output::print_json(&entries)?;

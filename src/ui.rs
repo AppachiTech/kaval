@@ -21,8 +21,8 @@ use std::collections::{HashMap, HashSet};
 use sysinfo::System;
 
 use crate::models::{
-    count_browser_groups, sort_entries, PortEntry, ServiceCategory, SortField, CPU_ERROR_THRESHOLD,
-    CPU_WARN_THRESHOLD,
+    count_browser_groups, port_matches, sort_entries, PortEntry, ServiceCategory, SortField,
+    CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
 };
 use crate::scanner::{kill_process, scan_ports};
 use crate::theme::theme;
@@ -106,6 +106,9 @@ impl App {
     }
 
     fn apply_filter(&mut self) {
+        // Pre-condition: self.browser_counts must be current.
+        // It is recomputed by refresh() after entries change, not here —
+        // browser counts depend on entry content, not sort order or filter text.
         let query = self.filter_text.to_lowercase();
 
         // Track which browser (pid, service) groups we've already included
@@ -172,16 +175,6 @@ impl App {
             self.detail_scroll = 0;
         }
         self.table_state.select(Some(new));
-    }
-}
-
-/// Match a port against a query string.
-/// Exact match when the query is a valid u16; substring fallback otherwise.
-fn port_matches(port: u16, query: &str) -> bool {
-    if let Ok(p) = query.parse::<u16>() {
-        port == p
-    } else {
-        port.to_string().contains(query)
     }
 }
 

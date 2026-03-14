@@ -203,6 +203,29 @@ pub fn sort_entries(entries: &mut [PortEntry], field: SortField) {
     }
 }
 
+/// Match a port against a query string.
+/// Exact match when the query is a valid u16; substring fallback otherwise.
+pub fn port_matches(port: u16, query: &str) -> bool {
+    if let Ok(p) = query.parse::<u16>() {
+        port == p
+    } else {
+        port.to_string().contains(query)
+    }
+}
+
+/// Retain only entries matching a filter pattern (case-insensitive).
+/// Matches against port number, process name, and known service name.
+pub fn filter_entries(entries: &mut Vec<PortEntry>, pattern: &str) {
+    let q = pattern.to_lowercase();
+    entries.retain(|e| {
+        port_matches(e.port, &q)
+            || e.process_name.to_lowercase().contains(&q)
+            || e.known_service
+                .map(|s| s.to_lowercase().contains(&q))
+                .unwrap_or(false)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
