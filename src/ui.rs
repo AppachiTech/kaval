@@ -56,7 +56,7 @@ struct App {
     confirm_kill: Option<(u32, String, u16, bool)>, // (pid, name, port, force)
     show_help: bool,
     loading: bool,
-    status_msg: Option<(String, Instant)>,
+    status_msg: Option<(String, Instant, bool)>, // (message, when, is_error)
     should_quit: bool,
 }
 
@@ -95,7 +95,7 @@ impl App {
                 self.apply_filter();
             }
             Err(e) => {
-                self.status_msg = Some((format!("Scan error: {}", e), Instant::now()));
+                self.status_msg = Some((format!("Scan error: {}", e), Instant::now(), true));
             }
         }
         self.loading = false;
@@ -322,11 +322,13 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                                 port
                             ),
                             Instant::now(),
+                            false,
                         ));
                         app.refresh();
                     }
                     Err(e) => {
-                        app.status_msg = Some((format!("Kill failed: {}", e), Instant::now()));
+                        app.status_msg =
+                            Some((format!("Kill failed: {}", e), Instant::now(), true));
                     }
                 }
                 app.confirm_kill = None;
@@ -398,7 +400,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('r') => {
                 app.refresh();
-                app.status_msg = Some(("Refreshed".to_string(), Instant::now()));
+                app.status_msg = Some(("Refreshed".to_string(), Instant::now(), false));
                 return;
             }
             _ => {}
@@ -463,10 +465,10 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 let url = format!("http://localhost:{}", entry.port);
                 if open_in_browser(&url) {
                     app.status_msg =
-                        Some((format!("Opening {}", url), Instant::now()));
+                        Some((format!("Opening {}", url), Instant::now(), false));
                 } else {
                     app.status_msg =
-                        Some(("Browser not available".to_string(), Instant::now()));
+                        Some(("Browser not available".to_string(), Instant::now(), true));
                 }
             }
         }
@@ -475,10 +477,13 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 let text = entry.port.to_string();
                 if clipboard_copy(&text) {
                     app.status_msg =
-                        Some((format!("Copied port {} to clipboard", text), Instant::now()));
+                        Some((format!("Copied port {} to clipboard", text), Instant::now(), false));
                 } else {
-                    app.status_msg =
-                        Some(("Clipboard unavailable (pbcopy/xclip/xsel not found)".to_string(), Instant::now()));
+                    app.status_msg = Some((
+                        "Clipboard unavailable (pbcopy/xclip/xsel not found)".to_string(),
+                        Instant::now(),
+                        true,
+                    ));
                 }
             }
         }
@@ -797,11 +802,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let t = theme();
 
     // Show status message if recent (within 3 seconds)
-    if let Some((ref msg, ref when)) = app.status_msg {
+    if let Some((ref msg, ref when, is_error)) = app.status_msg {
         if when.elapsed() < Duration::from_secs(3) {
+            let color = if is_error { t.error } else { t.success };
             let line = Line::from(Span::styled(
                 format!(" {}", msg),
-                Style::default().fg(t.success),
+                Style::default().fg(color),
             ));
             f.render_widget(Paragraph::new(line), area);
             return;
@@ -896,6 +902,8 @@ fn draw_help_overlay(f: &mut Frame) {
         ("Ctrl+S", "Cycle sort: Port → Name → CPU → Mem"),
         ("Ctrl+T", "Cycle protocol filter: TCP+UDP → TCP → UDP"),
         ("Ctrl+R", "Force refresh"),
+        ("y", "Yank port number to clipboard"),
+        ("o", "Open port in browser"),
         ("PgUp/PgDn", "Scroll detail pane"),
         ("Ctrl+Q / Esc", "Quit"),
         ("?", "Show / dismiss this help"),

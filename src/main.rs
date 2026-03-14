@@ -148,7 +148,10 @@ fn main() -> Result<()> {
                                 entry.process_name, entry.pid, entry.port
                             );
                         }
-                        kill_process(&sys, entry.pid, force)?;
+                        if let Err(e) = kill_process(&sys, entry.pid, force) {
+                            eprintln!("Error: {e}");
+                            std::process::exit(2);
+                        }
                         println!(
                             "{}Killed {} (PID {})",
                             if force { "Force " } else { "" },
