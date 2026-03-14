@@ -112,24 +112,23 @@ fn cli_list_filter_with_sort() {
 
 #[test]
 fn cli_list_filter_numeric_is_exact_port() {
-    // "5432" should not match port 54321, "80" should not match 8080
-    // We can't assert specific ports are present/absent (depends on system state),
-    // but we can assert the command succeeds and produces valid JSON
+    // "80" as a valid u16 must exact-match port 80, not substring-match 8080/800/etc.
     let output = Command::new(env!("CARGO_BIN_EXE_kav"))
         .args(["list", "--json", "--filter", "80"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Every port in output must be exactly 80 (if any results)
+    // Parse every "port":<N> value and assert it is exactly 80
     for line in stdout.lines() {
-        if line.contains("\"port\":") {
-            let has_port_80 = line.contains("\"port\":80,");
-            let has_other = line.contains("\"port\":8") || line.contains("\"port\":3800");
-            if has_other {
-                panic!("Substring-matched a non-80 port: {}", line);
-            }
-            let _ = has_port_80; // silence unused warning
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("{\"port\":") {
+            // rest starts with the port number, e.g. "80,\"protocol\":..."
+            let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let port: u16 = port_str
+                .parse()
+                .unwrap_or_else(|_| panic!("failed to parse port from: {}", line));
+            assert_eq!(port, 80, "filter '80' matched non-80 port in: {}", line);
         }
     }
 }
@@ -168,4 +167,35 @@ fn cli_kill_nonexistent_port_no_prompt() {
         .unwrap();
     // Should exit 1 (nothing found) without hanging on prompt
     assert!(!output.status.success());
+}
+
+#[test]
+fn cli_list_watch_json_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--watch", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "--watch and --json must be mutually exclusive"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("mutually exclusive"),
+        "error message should mention mutual exclusion"
+    );
+}
+
+#[test]
+fn cli_list_watch_flag_in_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--watch") || stdout.contains("-w"),
+        "--watch flag should appear in list help"
+    );
 }
