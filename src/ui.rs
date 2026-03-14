@@ -906,7 +906,7 @@ fn draw_help_overlay(f: &mut Frame) {
         ("Ctrl+R", "Force refresh"),
         ("y", "Yank port number to clipboard"),
         ("o", "Open port in browser"),
-        ("PgUp/PgDn", "Scroll detail pane"),
+        ("PgUp/PgDn ←/→", "Scroll detail pane"),
         ("Ctrl+Q / Esc", "Quit"),
         ("?", "Show / dismiss this help"),
     ];
