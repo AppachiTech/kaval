@@ -135,13 +135,33 @@ mod tests {
 
     const LO: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
+    /// Poll `check` until it holds or `timeout` passes. Other tests in this binary
+    /// spawn child processes; on macOS std marks new sockets close-on-exec in a
+    /// separate step, so a child spawned concurrently can inherit a test's socket
+    /// and keep a dropped listener alive until it exits.
+    fn eventually(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if check() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     #[test]
     fn tcp_accepts_true_for_listener_false_after_drop() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(tcp_accepts(port, Duration::from_millis(300)));
         drop(listener);
-        assert!(!tcp_accepts(port, Duration::from_millis(300)));
+        assert!(eventually(Duration::from_secs(5), || !tcp_accepts(
+            port,
+            Duration::from_millis(300)
+        )));
     }
 
     #[test]
@@ -150,7 +170,10 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         assert_eq!(bind_check(port, Protocol::Tcp), BindCheck::InUse);
         drop(listener);
-        assert_eq!(bind_check(port, Protocol::Tcp), BindCheck::Free);
+        assert!(eventually(Duration::from_secs(5), || bind_check(
+            port,
+            Protocol::Tcp
+        ) == BindCheck::Free));
     }
 
     #[test]
@@ -190,8 +213,14 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let h = health(LO, port, true, Duration::from_millis(500));
-        assert_eq!(h.result, HealthResult::Refused);
+        assert!(eventually(Duration::from_secs(5), || health(
+            LO,
+            port,
+            true,
+            Duration::from_millis(500)
+        )
+        .result
+            == HealthResult::Refused));
     }
 
     #[test]

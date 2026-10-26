@@ -74,7 +74,6 @@ pub enum Visibility {
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub entries: Vec<PortEntry>,
-    #[allow(dead_code)] // TODO(v0.2 Task 11a): hidden-socket hints
     pub visibility: Visibility,
 }
 

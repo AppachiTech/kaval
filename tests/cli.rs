@@ -13,16 +13,55 @@ fn stdout_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Extract `"cpu":<value>` from the v1 JSON line describing `port`.
-fn json_cpu_for_port(json: &str, port: u16) -> Option<f64> {
-    let needle = format!("\"port\":{port},");
-    let line = json.lines().find(|l| l.contains(&needle))?;
-    let rest = line.split("\"cpu\":").nth(1)?;
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    num.parse().ok()
+/// Parse a JSON document printed by kav.
+fn json_of(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("invalid JSON ({e}):\n{}", stdout_of(out)))
+}
+
+/// The `ports[]` objects of a `kav list --json` document for `port`.
+fn json_ports(doc: &serde_json::Value, port: u16) -> Vec<serde_json::Value> {
+    doc["ports"]
+        .as_array()
+        .expect("ports array")
+        .iter()
+        .filter(|p| p["port"] == port)
+        .cloned()
+        .collect()
+}
+
+/// CPU% of the TCP listener on `port` in a `kav list --json` document.
+fn json_cpu_for_port(doc: &serde_json::Value, port: u16) -> Option<f64> {
+    json_ports(doc, port)
+        .iter()
+        .find(|p| p["protocol"] == "TCP")
+        .and_then(|p| p["cpu"].as_f64())
+}
+
+#[test]
+fn list_json_v2_for_helper() {
+    let helper = Helper::spawn("tcp");
+    let doc = json_of(&kav(&["list", "--json"]));
+    assert_eq!(doc["schema"], 2);
+    let rows = json_ports(&doc, helper.port);
+    assert_eq!(rows.len(), 1, "one TCP row for the helper: {rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["pid"], helper.pid);
+    assert_eq!(row["addresses"], serde_json::json!(["127.0.0.1"]));
+    assert_eq!(row["exposed"], false);
+    assert!(
+        !row["command"].as_array().unwrap().is_empty(),
+        "command line present: {row}"
+    );
+}
+
+#[test]
+fn exposed_helper_is_exposed() {
+    let helper = Helper::spawn("exposed");
+    let doc = json_of(&kav(&["list", "--json"]));
+    let rows = json_ports(&doc, helper.port);
+    assert_eq!(rows[0]["exposed"], true);
+    assert_eq!(rows[0]["addresses"], serde_json::json!(["0.0.0.0"]));
 }
 
 #[test]
@@ -47,7 +86,7 @@ fn list_cpu_reflects_busy_process() {
     let mut readings = Vec::new();
     for _ in 0..3 {
         let out = kav(&["list", "--json"]);
-        let cpu = json_cpu_for_port(&stdout_of(&out), helper.port)
+        let cpu = json_cpu_for_port(&json_of(&out), helper.port)
             .unwrap_or_else(|| panic!("busy helper missing from JSON:\n{}", stdout_of(&out)));
         if cpu >= 30.0 {
             return;
@@ -95,9 +134,9 @@ fn cli_list_json_runs() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with('['));
-    assert!(stdout.trim_end().ends_with(']'));
+    let doc = json_of(&output);
+    assert_eq!(doc["schema"], 2);
+    assert!(doc["ports"].is_array());
 }
 
 #[test]
@@ -197,18 +236,8 @@ fn cli_list_filter_numeric_is_exact_port() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse every "port":<N> value and assert it is exactly 80
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("{\"port\":") {
-            // rest starts with the port number, e.g. "80,\"protocol\":..."
-            let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            let port: u16 = port_str
-                .parse()
-                .unwrap_or_else(|_| panic!("failed to parse port from: {}", line));
-            assert_eq!(port, 80, "filter '80' matched non-80 port in: {}", line);
-        }
+    for row in json_of(&output)["ports"].as_array().unwrap() {
+        assert_eq!(row["port"], 80, "filter '80' matched a non-80 port: {row}");
     }
 }
 
@@ -219,9 +248,8 @@ fn cli_list_filter_json_combo() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // No match → JSON empty array
-    assert_eq!(stdout.trim(), "[]");
+    // No match → empty ports array
+    assert_eq!(json_of(&output)["ports"], serde_json::json!([]));
 }
 
 #[test]

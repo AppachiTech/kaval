@@ -93,13 +93,18 @@ fn main() -> Result<()> {
                 sample_cpu: true,
                 containers: ContainerMode::Blocking,
             };
-            let mut entries = Scanner::new().scan(&opts)?.entries;
+            let snapshot = Scanner::new().scan(&opts)?;
+            let visibility = snapshot.visibility;
+            let mut entries = snapshot.entries;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
             if let Some(ref pattern) = filter {
                 filter_entries(&mut entries, pattern);
             }
             if json {
-                output::print_json(&entries)?;
+                output::json::write_pretty(
+                    &output::json::list_doc(&entries, visibility, None),
+                    &mut io::stdout().lock(),
+                )?;
             } else {
                 output::print_table(&entries, io::stdout().is_terminal());
             }
