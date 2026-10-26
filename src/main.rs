@@ -1,6 +1,7 @@
 mod cli;
 mod models;
 mod output;
+mod project;
 mod scanner;
 mod services;
 mod theme;

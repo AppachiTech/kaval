@@ -9,6 +9,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKin
 use crate::models::{
     Client, PortEntry, ProcessRef, Protocol, Service, ServiceCategory, ServiceSource,
 };
+use crate::project::ProjectCache;
 use crate::services::identify;
 
 /// What every listener refresh collects. `refresh_processes()` alone skips the
@@ -305,6 +306,7 @@ fn collect_sockets(tcp: bool, udp: bool) -> Result<Vec<RawSocket>> {
 pub struct Scanner {
     sys: System,
     users: Users,
+    projects: ProjectCache,
 }
 
 impl Scanner {
@@ -312,6 +314,7 @@ impl Scanner {
         Self {
             sys: System::new(),
             users: Users::new_with_refreshed_list(),
+            projects: ProjectCache::from_env(),
         }
     }
 
@@ -364,6 +367,9 @@ impl Scanner {
 
         let mut entries: Vec<PortEntry> = groups.into_iter().map(|g| self.build_entry(g)).collect();
         inherit_parent_services(&mut entries);
+        for e in &mut entries {
+            e.project = e.cwd.as_deref().and_then(|cwd| self.projects.resolve(cwd));
+        }
         let visibility = visibility_for(&entries, is_root());
         Ok(Snapshot {
             entries,
@@ -669,5 +675,11 @@ mod tests {
         assert!(e.cwd.is_some(), "cwd collected");
         assert!(e.user.is_some(), "user resolved");
         assert!(e.parent.is_some(), "parent resolved");
+        // cargo runs tests from the crate root, which is a git checkout under $HOME
+        // on dev machines and CI runners alike.
+        let cwd = std::env::current_dir().unwrap();
+        if std::env::var_os("HOME").is_some_and(|h| cwd.starts_with(h)) {
+            assert!(e.project.is_some(), "project resolved from cwd {cwd:?}");
+        }
     }
 }
