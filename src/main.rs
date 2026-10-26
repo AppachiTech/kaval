@@ -2,6 +2,7 @@ mod cli;
 mod docker;
 mod models;
 mod output;
+mod probe;
 mod project;
 mod scanner;
 mod services;

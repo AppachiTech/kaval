@@ -24,6 +24,7 @@ clap_complete = "4.5"
 clap_mangen = "0.2"
 sysinfo = { version = "0.39", default-features = false, features = ["system", "user"] }
 libc = "0.2"
+socket2 = "0.6"
 # WATCH: low-activity upstream; wraps platform-specific syscalls (macOS: proc_pidfdinfo,
 # Linux: procfs). Most likely breakage point on OS upgrades.
 # Migration: /proc/net/tcp on Linux (no crate needed); proc-info crate on macOS.
