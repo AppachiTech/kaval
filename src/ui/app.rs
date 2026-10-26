@@ -12,7 +12,9 @@ use ratatui::layout::{Position, Rect};
 use ratatui::widgets::TableState;
 
 use crate::killer::{self, Action, KillEnv, KillOptions, KillTarget, Signal};
-use crate::models::{count_browser_groups, matches_filter, sort_entries, PortEntry, SortField};
+use crate::models::{
+    count_browser_groups, matches_filter, sort_entries, EntryKey, PortEntry, SortField,
+};
 use crate::scanner::{Snapshot, Visibility};
 
 /// How long a status-bar message stays visible.
@@ -48,6 +50,14 @@ pub(super) struct Confirm {
     pub signal: Signal,
 }
 
+/// What a table row stands for, so the selection survives refreshes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RowId {
+    Entry(EntryKey),
+    /// A collapsed browser group: (pid, service).
+    Group(u32, String),
+}
+
 pub(super) struct Status {
     pub text: String,
     pub at: Instant,
@@ -59,6 +69,10 @@ pub struct App {
     pub(super) visibility: Visibility,
     /// Indices into `entries` that are shown (filtered, browser groups collapsed).
     pub(super) filtered: Vec<usize>,
+    /// How many entries match the filter (before browser groups collapse).
+    pub(super) matching: usize,
+    /// Identity of the selected row, followed across refreshes and re-sorts.
+    selected_id: Option<RowId>,
     pub(super) browser_counts: HashMap<(u32, String), usize>,
     pub(super) table_state: TableState,
     pub(super) filter_text: String,
@@ -70,6 +84,7 @@ pub struct App {
     pub(super) detail_scroll: u16,
     pub(super) confirm: Option<Confirm>,
     pub(super) show_help: bool,
+    pub(super) help_scroll: u16,
     pub(super) loading: bool,
     pub(super) status: Option<Status>,
     /// Where the table was last drawn (for mouse clicks).
@@ -83,6 +98,8 @@ impl App {
             entries: Vec::new(),
             visibility: Visibility::Complete,
             filtered: Vec::new(),
+            matching: 0,
+            selected_id: None,
             browser_counts: HashMap::new(),
             table_state: TableState::default(),
             filter_text: String::new(),
@@ -94,6 +111,7 @@ impl App {
             detail_scroll: 0,
             confirm: None,
             show_help: false,
+            help_scroll: 0,
             loading: true,
             status: None,
             table_area: Rect::default(),
@@ -119,38 +137,50 @@ impl App {
 
     fn resort(&mut self) {
         sort_entries(&mut self.entries, self.sort_field, false);
-        self.browser_counts = count_browser_groups(&self.entries);
         self.apply_filter();
+    }
+
+    /// Identity of the row at `index` in `filtered`.
+    fn row_id(&self, index: usize) -> Option<RowId> {
+        let e = &self.entries[*self.filtered.get(index)?];
+        Some(match e.browser_key() {
+            Some(key) if self.browser_counts.get(&key).copied().unwrap_or(0) > 1 => {
+                RowId::Group(key.0, key.1)
+            }
+            _ => RowId::Entry(e.key()),
+        })
     }
 
     pub(super) fn apply_filter(&mut self) {
         let query = self.filter_text.to_lowercase();
+        let matching: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| matches_filter(&self.entries[i], &query))
+            .collect();
+        self.matching = matching.len();
+        // Group only what the filter shows, so a lone match keeps its port.
+        let shown: Vec<PortEntry> = matching.iter().map(|&i| self.entries[i].clone()).collect();
+        self.browser_counts = count_browser_groups(&shown);
         // Browser rows collapse to the first per (pid, service).
         let mut browser_seen: HashSet<(u32, String)> = HashSet::new();
-        self.filtered = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if !matches_filter(e, &query) {
-                    return false;
-                }
-                match e.browser_key() {
-                    Some(key) => browser_seen.insert(key),
-                    None => true,
-                }
+        self.filtered = matching
+            .into_iter()
+            .filter(|&i| match self.entries[i].browser_key() {
+                Some(key) => browser_seen.insert(key),
+                None => true,
             })
-            .map(|(i, _)| i)
             .collect();
 
-        // Keep selection in bounds
-        match self.table_state.selected() {
-            Some(selected) if selected >= self.filtered.len() => {
-                self.table_state.select(self.filtered.len().checked_sub(1));
-            }
-            None if !self.filtered.is_empty() => self.table_state.select(Some(0)),
-            _ => {}
-        }
+        // Follow the selected row; if it is gone, stay at the same position.
+        let followed = self
+            .selected_id
+            .clone()
+            .and_then(|id| (0..self.filtered.len()).find(|&i| self.row_id(i) == Some(id.clone())));
+        let index = followed.or_else(|| match self.table_state.selected() {
+            Some(i) => self.filtered.len().checked_sub(1).map(|last| i.min(last)),
+            None => (!self.filtered.is_empty()).then_some(0),
+        });
+        self.table_state.select(index);
+        self.selected_id = index.and_then(|i| self.row_id(i));
     }
 
     pub(super) fn selected_entry(&self) -> Option<&PortEntry> {
@@ -166,10 +196,7 @@ impl App {
         }
         let current = self.table_state.selected().unwrap_or(0) as i32;
         let new = (current + delta).clamp(0, self.filtered.len() as i32 - 1) as usize;
-        if self.table_state.selected() != Some(new) {
-            self.detail_scroll = 0;
-        }
-        self.table_state.select(Some(new));
+        self.select_index(new);
     }
 
     fn select_index(&mut self, index: usize) {
@@ -178,7 +205,13 @@ impl App {
                 self.detail_scroll = 0;
             }
             self.table_state.select(Some(index));
+            self.selected_id = self.row_id(index);
         }
+    }
+
+    /// Rows that fit in the table (borders and header excluded).
+    fn page_size(&self) -> i32 {
+        i32::from(self.table_area.height.saturating_sub(3)).max(1)
     }
 
     /// TCP+UDP → TCP → UDP → TCP+UDP
@@ -213,9 +246,18 @@ impl App {
             return vec![];
         }
 
-        // Help overlay: any key dismisses it
+        // Help overlay: arrows scroll it, any other key dismisses it
         if self.show_help {
-            self.show_help = false;
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => self.help_scroll += 1,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                }
+                _ => {
+                    self.show_help = false;
+                    self.help_scroll = 0;
+                }
+            }
             return vec![];
         }
 
@@ -264,6 +306,8 @@ impl App {
                     self.apply_filter();
                 }
                 KeyCode::Enter => self.filter_active = false,
+                KeyCode::Up => self.move_selection(-1),
+                KeyCode::Down => self.move_selection(1),
                 KeyCode::Backspace => {
                     self.filter_text.pop();
                     self.apply_filter();
@@ -279,12 +323,21 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => return vec![Effect::Quit],
+            // Esc clears an applied filter; it never quits.
+            KeyCode::Esc => {
+                if !self.filter_text.is_empty() {
+                    self.filter_text.clear();
+                    self.apply_filter();
+                }
+            }
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            KeyCode::PageUp | KeyCode::Left => {
+            KeyCode::PageUp => self.move_selection(-self.page_size()),
+            KeyCode::PageDown => self.move_selection(self.page_size()),
+            KeyCode::Char('[') | KeyCode::Left => {
                 self.detail_scroll = self.detail_scroll.saturating_sub(3);
             }
-            KeyCode::PageDown | KeyCode::Right => {
+            KeyCode::Char(']') | KeyCode::Right => {
                 self.detail_scroll = self.detail_scroll.saturating_add(3);
             }
             KeyCode::Home => self.select_index(0),
@@ -667,6 +720,118 @@ mod tests {
             "{}",
             status.text
         );
+    }
+
+    // --- Task 14: selection identity, Esc, paging, filter-mode arrows ---
+
+    #[test]
+    fn selection_follows_identity_across_refresh() {
+        let entries = vec![
+            browser(5001, 100, "Chrome"),
+            browser(5002, 100, "Chrome"),
+            browser(5003, 100, "Chrome"),
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 1.0),
+            make_entry(5432, "postgres", None, ServiceCategory::Database, 0.0, 1.0),
+        ];
+        let mut app = app_with(entries.clone());
+        app.handle_key(key(KeyCode::Down)); // 3000 node → Chrome group
+        assert_eq!(app.selected_entry().unwrap().pid, Some(100));
+        let mut next = entries;
+        next.push(make_entry(
+            2000,
+            "ruby",
+            None,
+            ServiceCategory::Unknown,
+            0.0,
+            1.0,
+        ));
+        app.apply_snapshot(
+            Snapshot {
+                entries: next,
+                visibility: Visibility::Complete,
+            },
+            Instant::now(),
+        );
+        assert_eq!(
+            app.selected_entry().unwrap().pid,
+            Some(100),
+            "selection stays on Chrome when a row appears above it"
+        );
+    }
+
+    #[test]
+    fn selection_stays_in_place_when_its_row_disappears() {
+        let mut app = sample();
+        app.handle_key(key(KeyCode::Down)); // postgres
+        let remaining = vec![
+            make_entry(3000, "node", None, ServiceCategory::DevServer, 0.0, 1.0),
+            make_entry(6379, "redis", None, ServiceCategory::Cache, 0.0, 1.0),
+        ];
+        app.apply_snapshot(
+            Snapshot {
+                entries: remaining,
+                visibility: Visibility::Complete,
+            },
+            Instant::now(),
+        );
+        assert_eq!(app.table_state.selected(), Some(1));
+        assert_eq!(app.selected_entry().unwrap().port, 6379);
+    }
+
+    #[test]
+    fn esc_clears_filter_then_noop() {
+        let mut app = sample();
+        app.handle_key(key(KeyCode::Char('/')));
+        for c in "red".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.filter_active);
+        assert_eq!(app.filtered.len(), 1, "filter kept after Enter");
+        assert_eq!(app.handle_key(key(KeyCode::Esc)), vec![]);
+        assert!(app.filter_text.is_empty());
+        assert_eq!(app.filtered.len(), 3, "Esc cleared the filter");
+        assert_eq!(
+            app.handle_key(key(KeyCode::Esc)),
+            vec![],
+            "second Esc does nothing"
+        );
+    }
+
+    #[test]
+    fn pgdn_pages_table() {
+        let entries = (0..30)
+            .map(|i| make_entry(4000 + i, "svc", None, ServiceCategory::Unknown, 0.0, 1.0))
+            .collect();
+        let mut app = app_with(entries);
+        app.table_area = Rect::new(0, 0, 80, 13); // 10 visible rows
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(app.table_state.selected(), Some(10));
+        app.handle_key(key(KeyCode::PageDown));
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(app.table_state.selected(), Some(29), "clamped at the end");
+        app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(app.table_state.selected(), Some(19));
+    }
+
+    #[test]
+    fn arrows_navigate_in_filter_mode() {
+        let mut app = sample();
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(key(KeyCode::Down));
+        assert!(app.filter_active, "still filtering");
+        assert_eq!(app.table_state.selected(), Some(1));
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn brackets_scroll_the_detail_pane() {
+        let mut app = sample();
+        app.handle_key(key(KeyCode::Char(']')));
+        assert_eq!(app.detail_scroll, 3);
+        app.handle_key(key(KeyCode::Char('[')));
+        assert_eq!(app.detail_scroll, 0);
     }
 
     // --- browser grouping ---
