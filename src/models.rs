@@ -30,7 +30,6 @@ pub enum ServiceCategory {
     DevServer,
     Database,
     Cache,
-    #[allow(dead_code)] // TODO(v0.2 Task 5): assigned by broker rules
     Queue,
     Container,
     Browser,
@@ -42,7 +41,6 @@ pub enum ServiceCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceSource {
     Process,
-    #[allow(dead_code)] // TODO(v0.2 Task 5): command-line rules
     Command,
     Port,
     #[allow(dead_code)] // TODO(v0.2 Task 7): container attribution

@@ -2,9 +2,9 @@ mod cli;
 mod models;
 mod output;
 mod scanner;
+mod services;
 mod theme;
 mod ui;
-mod util;
 
 use std::collections::HashSet;
 use std::io::{self, BufRead, IsTerminal, Write};

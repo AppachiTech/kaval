@@ -6,8 +6,10 @@ use anyhow::Result;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users};
 
-use crate::models::{Client, PortEntry, ProcessRef, Protocol, ServiceCategory};
-use crate::util::identify;
+use crate::models::{
+    Client, PortEntry, ProcessRef, Protocol, Service, ServiceCategory, ServiceSource,
+};
+use crate::services::identify;
 
 /// What every listener refresh collects. `refresh_processes()` alone skips the
 /// command line, cwd and user, so request them explicitly (fetched once per process).
@@ -193,6 +195,35 @@ pub(crate) fn group_sockets(raw: &[RawSocket]) -> Vec<Group> {
         .collect()
 }
 
+/// Worker processes (uvicorn/gunicorn workers, multiprocessing children) often
+/// carry no framework hints in their own command line. When a row's service is
+/// only a port guess (or unknown) and its parent listens on the same port with a
+/// real detection, inherit the parent's service.
+pub(crate) fn inherit_parent_services(entries: &mut [PortEntry]) {
+    let known: HashMap<(u16, u32), Service> = entries
+        .iter()
+        .filter_map(|e| {
+            let s = e
+                .service
+                .as_ref()
+                .filter(|s| s.source != ServiceSource::Port)?;
+            Some(((e.port, e.pid?), s.clone()))
+        })
+        .collect();
+    for e in entries.iter_mut() {
+        if e.service
+            .as_ref()
+            .is_some_and(|s| s.source != ServiceSource::Port)
+        {
+            continue;
+        }
+        if let Some(s) = e.parent.as_ref().and_then(|p| known.get(&(e.port, p.pid))) {
+            e.service = Some(s.clone());
+            e.category = s.category;
+        }
+    }
+}
+
 /// True when kav runs with root privileges (sees every socket owner).
 pub fn is_root() -> bool {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -331,7 +362,8 @@ impl Scanner {
         let extra: Vec<Pid> = extra.into_iter().filter(|p| !pids.contains(p)).collect();
         self.refresh(&extra, ProcessRefreshKind::nothing());
 
-        let entries: Vec<PortEntry> = groups.into_iter().map(|g| self.build_entry(g)).collect();
+        let mut entries: Vec<PortEntry> = groups.into_iter().map(|g| self.build_entry(g)).collect();
+        inherit_parent_services(&mut entries);
         let visibility = visibility_for(&entries, is_root());
         Ok(Snapshot {
             entries,
@@ -407,7 +439,7 @@ impl Scanner {
                     .and_then(|uid| self.user_name(&uid));
             }
         }
-        e.service = identify(e.port, &e.process_name);
+        e.service = identify(e.port, &e.process_name, &e.process_cmd);
         e.category = e
             .service
             .as_ref()
@@ -590,6 +622,35 @@ mod tests {
             Visibility::Complete
         };
         assert_eq!(visibility_for(&[visible], false), expected);
+    }
+
+    #[test]
+    fn workers_inherit_parent_listener_service() {
+        use crate::models::testutil::{entry, with_service};
+        use crate::models::{ProcessRef, ServiceSource};
+        let parent = with_service(
+            entry(8000, 52009, "Python"),
+            "Uvicorn",
+            ServiceCategory::DevServer,
+            ServiceSource::Command,
+        );
+        let mut worker = with_service(
+            entry(8000, 52011, "Python"),
+            "Django / FastAPI",
+            ServiceCategory::DevServer,
+            ServiceSource::Port,
+        );
+        worker.parent = Some(ProcessRef {
+            pid: 52009,
+            name: "Python".into(),
+        });
+        let mut other_port = worker.clone();
+        other_port.port = 9000;
+        other_port.service = None;
+        let mut v = vec![parent, worker, other_port];
+        inherit_parent_services(&mut v);
+        assert_eq!(v[1].service_name(), Some("Uvicorn"));
+        assert_eq!(v[2].service_name(), None, "only same-port parents count");
     }
 
     #[test]
