@@ -5,8 +5,7 @@ use anyhow::Result;
 use ratatui::crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 
 use crate::models::{
-    self, count_browser_groups, dedup_browser_indices, ServiceCategory, CPU_ERROR_THRESHOLD,
-    CPU_WARN_THRESHOLD,
+    self, count_browser_groups, dedup_browser_indices, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
 };
 use crate::theme::theme;
 
@@ -40,7 +39,7 @@ impl Ansi {
 /// Options for table rendering
 struct TableOptions {
     /// Browser count per (pid, service) for grouping — None skips grouping
-    browser_counts: Option<HashMap<(u32, &'static str), usize>>,
+    browser_counts: Option<HashMap<(u32, String), usize>>,
     /// Show command line below each row
     show_cmd: bool,
     /// Show summary footer with these pre-computed counts (total, tcp, udp)
@@ -122,14 +121,8 @@ fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) 
         let browser_count = opts
             .browser_counts
             .as_ref()
-            .and_then(|counts| {
-                if e.category == ServiceCategory::Browser {
-                    e.known_service
-                        .and_then(|svc| counts.get(&(e.pid, svc)).copied())
-                } else {
-                    None
-                }
-            })
+            .zip(e.browser_key())
+            .and_then(|(counts, key)| counts.get(&key).copied())
             .unwrap_or(1);
 
         let port_text = if browser_count > 1 {
@@ -137,7 +130,7 @@ fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) 
         } else {
             e.port.to_string()
         };
-        let port_col = if e.known_service.is_some() {
+        let port_col = if e.service.is_some() {
             Color::White
         } else {
             light
@@ -159,7 +152,7 @@ fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) 
         );
         let _ = write!(w, "{} {:<22}", a.fg(cat_col), truncate(&e.process_name, 22));
 
-        let service_text = match e.known_service {
+        let service_text = match e.service_name() {
             Some(svc) if browser_count > 1 => format!("{} ×{}", svc, browser_count),
             Some(svc) => svc.to_string(),
             None => String::new(),
@@ -177,7 +170,8 @@ fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) 
             );
         }
 
-        let _ = write!(w, "{} {:<7}", a.fg(dim), e.pid);
+        let pid_text = e.pid.map_or_else(|| "-".to_string(), |p| p.to_string());
+        let _ = write!(w, "{} {:<7}", a.fg(dim), pid_text);
         let cpu_str = format!("{:.1}%", e.cpu_percent);
         let cpu_col = if e.cpu_percent > CPU_ERROR_THRESHOLD {
             error
@@ -205,7 +199,7 @@ fn print_rows(entries: &[&models::PortEntry], color: bool, opts: &TableOptions) 
 
     // Summary footer
     if let Some((total, tcp, udp)) = opts.summary_counts {
-        let services = entries.iter().filter(|e| e.known_service.is_some()).count();
+        let services = entries.iter().filter(|e| e.service.is_some()).count();
         let _ = write!(
             w,
             "\n{}{}{} ports{} ({} TCP, {} UDP)",
@@ -262,10 +256,10 @@ fn write_json(entries: &[models::PortEntry], w: &mut impl Write) -> Result<()> {
             e.port,
             e.protocol,
             json_escape(&e.process_name),
-            e.known_service
+            e.service_name()
                 .map(|s| format!("\"{}\"", json_escape(s)))
                 .unwrap_or_else(|| "null".to_string()),
-            e.pid,
+            e.pid.map_or_else(|| "null".to_string(), |p| p.to_string()),
             e.cpu_percent,
             e.memory_mb,
             e.uptime.as_secs(),
@@ -372,25 +366,34 @@ mod tests {
     fn make_json_entry(
         port: u16,
         name: &str,
-        service: Option<&'static str>,
+        service: Option<&str>,
         cpu: f32,
         memory_mb: f64,
         uptime_secs: u64,
     ) -> models::PortEntry {
-        use std::net::{IpAddr, Ipv4Addr};
-        models::PortEntry {
-            protocol: models::Protocol::Tcp,
-            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
-            pid: port as u32,
-            process_name: name.to_string(),
-            process_cmd: vec![name.to_string(), "--daemon".to_string()],
-            cpu_percent: cpu,
-            memory_mb,
-            uptime: std::time::Duration::from_secs(uptime_secs),
-            known_service: service,
-            category: models::ServiceCategory::Unknown,
+        let mut e = models::testutil::entry(port, port as u32, name);
+        e.process_cmd = vec![name.to_string(), "--daemon".to_string()];
+        e.cpu_percent = cpu;
+        e.memory_mb = memory_mb;
+        e.uptime = std::time::Duration::from_secs(uptime_secs);
+        match service {
+            Some(svc) => models::testutil::with_service(
+                e,
+                svc,
+                models::ServiceCategory::Unknown,
+                models::ServiceSource::Process,
+            ),
+            None => e,
         }
+    }
+
+    #[test]
+    fn print_json_ownerless_pid_is_null() {
+        let mut e = make_json_entry(47005, "?", None, 0.0, 0.0, 0);
+        e.pid = None;
+        let mut buf = Vec::new();
+        write_json(&[e], &mut buf).unwrap();
+        assert!(String::from_utf8(buf).unwrap().contains("\"pid\":null"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub struct Theme {
     pub dev_server: Color,
     pub database: Color,
     pub cache: Color,
+    pub queue: Color,
     pub container: Color,
     pub browser: Color,
     pub system: Color,
@@ -40,6 +41,7 @@ impl Default for Theme {
             dev_server: Color::Rgb(34, 197, 94), // green
             database: Color::Rgb(234, 179, 8),   // yellow
             cache: Color::Rgb(168, 85, 247),     // purple
+            queue: Color::Rgb(244, 114, 182),    // pink
             container: Color::Rgb(96, 165, 250), // blue
             browser: Color::Rgb(251, 146, 60),   // orange
             system: Color::Rgb(140, 140, 145),   // gray
@@ -62,6 +64,7 @@ impl Theme {
             ServiceCategory::DevServer => self.dev_server,
             ServiceCategory::Database => self.database,
             ServiceCategory::Cache => self.cache,
+            ServiceCategory::Queue => self.queue,
             ServiceCategory::Container => self.container,
             ServiceCategory::Browser => self.browser,
             ServiceCategory::System => self.system,

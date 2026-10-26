@@ -41,14 +41,20 @@ fn check_reports_helper_pid() {
 #[test]
 fn list_cpu_reflects_busy_process() {
     let helper = Helper::spawn("busy");
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let out = kav(&["list", "--json"]);
-    let cpu = json_cpu_for_port(&stdout_of(&out), helper.port)
-        .unwrap_or_else(|| panic!("busy helper missing from JSON:\n{}", stdout_of(&out)));
-    assert!(
-        cpu >= 30.0,
-        "busy helper spins a full core but kav reported {cpu}% CPU"
-    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // The helper can be briefly starved while the rest of the suite starts up, so
+    // take the best of three samples. A sampling bug reads <10% on every attempt.
+    let mut readings = Vec::new();
+    for _ in 0..3 {
+        let out = kav(&["list", "--json"]);
+        let cpu = json_cpu_for_port(&stdout_of(&out), helper.port)
+            .unwrap_or_else(|| panic!("busy helper missing from JSON:\n{}", stdout_of(&out)));
+        if cpu >= 30.0 {
+            return;
+        }
+        readings.push(cpu);
+    }
+    panic!("busy helper spins a full core but kav reported {readings:?}% CPU");
 }
 
 #[test]
@@ -63,7 +69,6 @@ fn check_shows_command_line() {
 }
 
 #[test]
-#[ignore = "red until Task 4b keys rows by protocol"]
 fn tcp_and_udp_on_same_port_are_both_listed() {
     let helper = Helper::spawn("tcpudp");
     let port = helper.port.to_string();

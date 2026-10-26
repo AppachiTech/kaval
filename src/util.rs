@@ -1,4 +1,4 @@
-use crate::models::ServiceCategory;
+use crate::models::{Service, ServiceCategory, ServiceSource};
 
 /// How to match a process name
 #[derive(Clone, Copy)]
@@ -326,65 +326,84 @@ fn matches_rule(name: &str, m: Match) -> bool {
     }
 }
 
-/// Known port-to-service mappings for common developer tools
-pub fn identify_service(port: u16, process_name: &str) -> (Option<&'static str>, ServiceCategory) {
+/// Identify a known service from the process name, falling back to well-known
+/// ports. Port-only matches carry `ServiceSource::Port` (they are guesses).
+pub fn identify(port: u16, process_name: &str) -> Option<Service> {
     let name_lower = process_name.to_lowercase();
+    let make = |name: &str, category, source| Service {
+        name: name.to_string(),
+        category,
+        source,
+        note: None,
+    };
 
     // First try process name detection (more reliable than port)
-    for &(ref matcher, service, category) in PROCESS_RULES {
-        if matches_rule(&name_lower, *matcher) {
-            return (Some(service), category);
+    for &(matcher, service, category) in PROCESS_RULES {
+        if matches_rule(&name_lower, matcher) {
+            return Some(make(service, category, ServiceSource::Process));
         }
     }
 
     // Fall back to well-known port mappings
-    for &(p, service, category) in PORT_RULES {
-        if port == p {
-            return (Some(service), category);
-        }
-    }
-
-    (None, ServiceCategory::Unknown)
+    PORT_RULES
+        .iter()
+        .find(|&&(p, _, _)| p == port)
+        .map(|&(_, service, category)| make(service, category, ServiceSource::Port))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn identify_service(port: u16, name: &str) -> (Option<String>, ServiceCategory) {
+        match identify(port, name) {
+            Some(s) => (Some(s.name), s.category),
+            None => (None, ServiceCategory::Unknown),
+        }
+    }
+
+    #[test]
+    fn port_only_match_is_marked_as_guess() {
+        let s = identify(8000, "Python").unwrap();
+        assert_eq!(s.source, ServiceSource::Port);
+        let s = identify(9999, "postgres").unwrap();
+        assert_eq!(s.source, ServiceSource::Process);
+    }
+
     // --- Process name detection (databases) ---
 
     #[test]
     fn identifies_postgres_by_name() {
         let (svc, cat) = identify_service(9999, "postgres");
-        assert_eq!(svc, Some("PostgreSQL"));
+        assert_eq!(svc.as_deref(), Some("PostgreSQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_postmaster() {
         let (svc, cat) = identify_service(9999, "postmaster");
-        assert_eq!(svc, Some("PostgreSQL"));
+        assert_eq!(svc.as_deref(), Some("PostgreSQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_mysql_by_name() {
         let (svc, cat) = identify_service(9999, "mysqld");
-        assert_eq!(svc, Some("MySQL"));
+        assert_eq!(svc.as_deref(), Some("MySQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_mariadb_by_name() {
         let (svc, cat) = identify_service(9999, "mariadbd");
-        assert_eq!(svc, Some("MySQL"));
+        assert_eq!(svc.as_deref(), Some("MySQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_mongodb_by_name() {
         let (svc, cat) = identify_service(9999, "mongod");
-        assert_eq!(svc, Some("MongoDB"));
+        assert_eq!(svc.as_deref(), Some("MongoDB"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
@@ -393,14 +412,14 @@ mod tests {
     #[test]
     fn identifies_redis_server() {
         let (svc, cat) = identify_service(9999, "redis-server");
-        assert_eq!(svc, Some("Redis"));
+        assert_eq!(svc.as_deref(), Some("Redis"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
     #[test]
     fn identifies_memcached() {
         let (svc, cat) = identify_service(9999, "memcached");
-        assert_eq!(svc, Some("Memcached"));
+        assert_eq!(svc.as_deref(), Some("Memcached"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
@@ -409,14 +428,14 @@ mod tests {
     #[test]
     fn identifies_docker() {
         let (svc, cat) = identify_service(9999, "com.docker.backend");
-        assert_eq!(svc, Some("Docker"));
+        assert_eq!(svc.as_deref(), Some("Docker"));
         assert_eq!(cat, ServiceCategory::Container);
     }
 
     #[test]
     fn identifies_colima() {
         let (svc, cat) = identify_service(9999, "colima");
-        assert_eq!(svc, Some("Colima"));
+        assert_eq!(svc.as_deref(), Some("Colima"));
         assert_eq!(cat, ServiceCategory::Container);
     }
 
@@ -425,21 +444,21 @@ mod tests {
     #[test]
     fn identifies_vscode() {
         let (svc, cat) = identify_service(9999, "Code Helper");
-        assert_eq!(svc, Some("VS Code"));
+        assert_eq!(svc.as_deref(), Some("VS Code"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_cursor() {
         let (svc, cat) = identify_service(9999, "Cursor Helper");
-        assert_eq!(svc, Some("Cursor"));
+        assert_eq!(svc.as_deref(), Some("Cursor"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_ollama() {
         let (svc, cat) = identify_service(9999, "ollama");
-        assert_eq!(svc, Some("Ollama"));
+        assert_eq!(svc.as_deref(), Some("Ollama"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
@@ -448,28 +467,28 @@ mod tests {
     #[test]
     fn identifies_chrome() {
         let (svc, cat) = identify_service(9999, "Google Chrome Helper");
-        assert_eq!(svc, Some("Chrome"));
+        assert_eq!(svc.as_deref(), Some("Chrome"));
         assert_eq!(cat, ServiceCategory::Browser);
     }
 
     #[test]
     fn identifies_brave() {
         let (svc, cat) = identify_service(9999, "Brave Browser Helper");
-        assert_eq!(svc, Some("Brave"));
+        assert_eq!(svc.as_deref(), Some("Brave"));
         assert_eq!(cat, ServiceCategory::Browser);
     }
 
     #[test]
     fn identifies_firefox() {
         let (svc, cat) = identify_service(9999, "firefox");
-        assert_eq!(svc, Some("Firefox"));
+        assert_eq!(svc.as_deref(), Some("Firefox"));
         assert_eq!(cat, ServiceCategory::Browser);
     }
 
     #[test]
     fn identifies_safari() {
         let (svc, cat) = identify_service(9999, "Safari");
-        assert_eq!(svc, Some("Safari"));
+        assert_eq!(svc.as_deref(), Some("Safari"));
         assert_eq!(cat, ServiceCategory::Browser);
     }
 
@@ -478,14 +497,14 @@ mod tests {
     #[test]
     fn identifies_nginx() {
         let (svc, cat) = identify_service(9999, "nginx");
-        assert_eq!(svc, Some("Nginx"));
+        assert_eq!(svc.as_deref(), Some("Nginx"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
     #[test]
     fn identifies_sshd() {
         let (svc, cat) = identify_service(9999, "sshd");
-        assert_eq!(svc, Some("SSH"));
+        assert_eq!(svc.as_deref(), Some("SSH"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
@@ -494,21 +513,21 @@ mod tests {
     #[test]
     fn identifies_port_3000() {
         let (svc, cat) = identify_service(3000, "node");
-        assert_eq!(svc, Some("Next.js / Rails"));
+        assert_eq!(svc.as_deref(), Some("Next.js / Rails"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_port_5432() {
         let (svc, cat) = identify_service(5432, "unknown_process");
-        assert_eq!(svc, Some("PostgreSQL"));
+        assert_eq!(svc.as_deref(), Some("PostgreSQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_port_6379() {
         let (svc, cat) = identify_service(6379, "unknown_process");
-        assert_eq!(svc, Some("Redis"));
+        assert_eq!(svc.as_deref(), Some("Redis"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
@@ -516,14 +535,14 @@ mod tests {
     fn identifies_vite_ports() {
         let (svc1, _) = identify_service(5173, "unknown");
         let (svc2, _) = identify_service(5174, "unknown");
-        assert_eq!(svc1, Some("Vite"));
-        assert_eq!(svc2, Some("Vite"));
+        assert_eq!(svc1.as_deref(), Some("Vite"));
+        assert_eq!(svc2.as_deref(), Some("Vite"));
     }
 
     #[test]
     fn identifies_port_22() {
         let (svc, cat) = identify_service(22, "unknown");
-        assert_eq!(svc, Some("SSH"));
+        assert_eq!(svc.as_deref(), Some("SSH"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
@@ -533,7 +552,7 @@ mod tests {
     fn process_name_takes_priority_over_port() {
         // Port 3000 would map to "Next.js / Rails", but "postgres" name should win
         let (svc, cat) = identify_service(3000, "postgres");
-        assert_eq!(svc, Some("PostgreSQL"));
+        assert_eq!(svc.as_deref(), Some("PostgreSQL"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
@@ -542,13 +561,13 @@ mod tests {
     #[test]
     fn process_name_is_case_insensitive() {
         let (svc, _) = identify_service(9999, "POSTGRES");
-        assert_eq!(svc, Some("PostgreSQL"));
+        assert_eq!(svc.as_deref(), Some("PostgreSQL"));
 
         let (svc, _) = identify_service(9999, "Redis-Server");
-        assert_eq!(svc, Some("Redis"));
+        assert_eq!(svc.as_deref(), Some("Redis"));
 
         let (svc, _) = identify_service(9999, "NGINX");
-        assert_eq!(svc, Some("Nginx"));
+        assert_eq!(svc.as_deref(), Some("Nginx"));
     }
 
     // --- New services ---
@@ -556,112 +575,112 @@ mod tests {
     #[test]
     fn identifies_bun() {
         let (svc, cat) = identify_service(9999, "bun");
-        assert_eq!(svc, Some("Bun"));
+        assert_eq!(svc.as_deref(), Some("Bun"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_deno() {
         let (svc, cat) = identify_service(9999, "deno");
-        assert_eq!(svc, Some("Deno"));
+        assert_eq!(svc.as_deref(), Some("Deno"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_supabase() {
         let (svc, cat) = identify_service(9999, "supabase");
-        assert_eq!(svc, Some("Supabase"));
+        assert_eq!(svc.as_deref(), Some("Supabase"));
         assert_eq!(cat, ServiceCategory::DevServer);
     }
 
     #[test]
     fn identifies_minio() {
         let (svc, cat) = identify_service(9999, "minio");
-        assert_eq!(svc, Some("MinIO"));
+        assert_eq!(svc.as_deref(), Some("MinIO"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_clickhouse() {
         let (svc, cat) = identify_service(9999, "clickhouse-server");
-        assert_eq!(svc, Some("ClickHouse"));
+        assert_eq!(svc.as_deref(), Some("ClickHouse"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_elasticsearch() {
         let (svc, cat) = identify_service(9999, "elasticsearch");
-        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(svc.as_deref(), Some("Elasticsearch"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_opensearch() {
         let (svc, cat) = identify_service(9999, "opensearch");
-        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(svc.as_deref(), Some("Elasticsearch"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_traefik() {
         let (svc, cat) = identify_service(9999, "traefik");
-        assert_eq!(svc, Some("Traefik"));
+        assert_eq!(svc.as_deref(), Some("Traefik"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
     #[test]
     fn identifies_envoy() {
         let (svc, cat) = identify_service(9999, "envoy");
-        assert_eq!(svc, Some("Envoy"));
+        assert_eq!(svc.as_deref(), Some("Envoy"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
     #[test]
     fn identifies_haproxy() {
         let (svc, cat) = identify_service(9999, "haproxy");
-        assert_eq!(svc, Some("HAProxy"));
+        assert_eq!(svc.as_deref(), Some("HAProxy"));
         assert_eq!(cat, ServiceCategory::System);
     }
 
     #[test]
     fn identifies_kafka_by_name() {
         let (svc, cat) = identify_service(9999, "kafka");
-        assert_eq!(svc, Some("Kafka"));
+        assert_eq!(svc.as_deref(), Some("Kafka"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
     #[test]
     fn identifies_rabbitmq_by_name() {
         let (svc, cat) = identify_service(9999, "rabbitmq-server");
-        assert_eq!(svc, Some("RabbitMQ"));
+        assert_eq!(svc.as_deref(), Some("RabbitMQ"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
     #[test]
     fn identifies_nats() {
         let (svc, cat) = identify_service(9999, "nats-server");
-        assert_eq!(svc, Some("NATS"));
+        assert_eq!(svc.as_deref(), Some("NATS"));
         assert_eq!(cat, ServiceCategory::Cache);
     }
 
     #[test]
     fn identifies_kubernetes() {
         let (svc, cat) = identify_service(9999, "kubelet");
-        assert_eq!(svc, Some("Kubernetes"));
+        assert_eq!(svc.as_deref(), Some("Kubernetes"));
         assert_eq!(cat, ServiceCategory::Container);
     }
 
     #[test]
     fn identifies_port_9200_elasticsearch() {
         let (svc, cat) = identify_service(9200, "unknown");
-        assert_eq!(svc, Some("Elasticsearch"));
+        assert_eq!(svc.as_deref(), Some("Elasticsearch"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 
     #[test]
     fn identifies_port_8123_clickhouse() {
         let (svc, cat) = identify_service(8123, "unknown");
-        assert_eq!(svc, Some("ClickHouse"));
+        assert_eq!(svc.as_deref(), Some("ClickHouse"));
         assert_eq!(cat, ServiceCategory::Database);
     }
 

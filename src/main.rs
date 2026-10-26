@@ -13,7 +13,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
 use models::{filter_entries, sort_entries, SortField};
-use scanner::{kill_process, new_system_with_cpu, scan_ports};
+use scanner::{kill_process, ScanOptions, Scanner};
 
 /// Refresh `kav list` output in-place on the same screen.
 /// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
@@ -26,7 +26,13 @@ fn run_watch(
     use ratatui::crossterm::{cursor, execute, terminal};
 
     let color = io::stdout().is_terminal();
-    let mut sys = new_system_with_cpu();
+    let mut scanner = Scanner::new();
+    let mut opts = ScanOptions {
+        tcp: show_tcp,
+        udp: show_udp,
+        sample_cpu: true,
+        ..ScanOptions::default()
+    };
 
     loop {
         execute!(
@@ -36,8 +42,9 @@ fn run_watch(
         )?;
         println!("kav watch  —  Ctrl+C to exit  —  refreshing every 2s\n");
 
-        let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
-        sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
+        let mut entries = scanner.scan(&opts)?.entries;
+        opts.sample_cpu = false; // the persistent scanner measures between refreshes
+        sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
         if let Some(pattern) = filter {
             filter_entries(&mut entries, pattern);
         }
@@ -76,9 +83,14 @@ fn main() -> Result<()> {
                 }
                 return run_watch(sort, filter.as_deref(), show_tcp, show_udp);
             }
-            let mut sys = new_system_with_cpu();
-            let mut entries = scan_ports(&mut sys, show_tcp, show_udp)?;
-            sort_entries(&mut entries, sort.unwrap_or(SortField::Port));
+            let opts = ScanOptions {
+                tcp: show_tcp,
+                udp: show_udp,
+                sample_cpu: true,
+                ..ScanOptions::default()
+            };
+            let mut entries = Scanner::new().scan(&opts)?.entries;
+            sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
             if let Some(ref pattern) = filter {
                 filter_entries(&mut entries, pattern);
             }
@@ -90,8 +102,11 @@ fn main() -> Result<()> {
         }
 
         Some(Command::Check { ports }) => {
-            let mut sys = new_system_with_cpu();
-            let entries = scan_ports(&mut sys, true, true)?;
+            let opts = ScanOptions {
+                sample_cpu: true,
+                ..ScanOptions::default()
+            };
+            let entries = Scanner::new().scan(&opts)?.entries;
             let color = io::stdout().is_terminal();
             let matches: Vec<_> = entries.iter().filter(|e| ports.contains(&e.port)).collect();
             let missing: Vec<_> = ports
@@ -114,8 +129,8 @@ fn main() -> Result<()> {
         }
 
         Some(Command::Kill { ports, force, yes }) => {
-            let mut sys = new_system_with_cpu();
-            let entries = scan_ports(&mut sys, true, true)?;
+            let mut scanner = Scanner::new();
+            let entries = scanner.scan(&ScanOptions::default())?.entries;
             let mut killed_pids: HashSet<u32> = HashSet::new();
             let mut any_found = false;
             let interactive = !yes && io::stdin().is_terminal();
@@ -126,14 +141,26 @@ fn main() -> Result<()> {
                 } else {
                     any_found = true;
                     for entry in &matches {
-                        if !killed_pids.insert(entry.pid) {
+                        let Some(pid) = entry.pid else {
+                            println!(
+                                "Port {} is held by a process kav can't see{} — try sudo",
+                                entry.port,
+                                entry
+                                    .user
+                                    .as_deref()
+                                    .map(|u| format!(" (owned by {u})"))
+                                    .unwrap_or_default()
+                            );
+                            continue;
+                        };
+                        if !killed_pids.insert(pid) {
                             continue;
                         }
                         // Prompt if running in a TTY and --yes / --force not passed
                         if interactive && !force {
                             print!(
                                 "Kill {} (PID {}) on port {}? [y/N] ",
-                                entry.process_name, entry.pid, entry.port
+                                entry.process_name, pid, entry.port
                             );
                             io::stdout().flush()?;
                             let mut input = String::new();
@@ -145,10 +172,10 @@ fn main() -> Result<()> {
                         } else if !force {
                             println!(
                                 "Killing {} (PID {}) on port {}...",
-                                entry.process_name, entry.pid, entry.port
+                                entry.process_name, pid, entry.port
                             );
                         }
-                        if let Err(e) = kill_process(&sys, entry.pid, force) {
+                        if let Err(e) = kill_process(scanner.system(), pid, force) {
                             eprintln!("Error: {e}");
                             std::process::exit(2);
                         }
@@ -156,7 +183,7 @@ fn main() -> Result<()> {
                             "{}Killed {} (PID {})",
                             if force { "Force " } else { "" },
                             entry.process_name,
-                            entry.pid
+                            pid
                         );
                     }
                 }

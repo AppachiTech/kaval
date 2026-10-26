@@ -18,13 +18,11 @@ use ratatui::{
 
 use std::collections::{HashMap, HashSet};
 
-use sysinfo::System;
-
 use crate::models::{
-    count_browser_groups, port_matches, sort_entries, PortEntry, ServiceCategory, SortField,
-    CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
+    count_browser_groups, matches_filter, sort_entries, PortEntry, SortField, CPU_ERROR_THRESHOLD,
+    CPU_WARN_THRESHOLD,
 };
-use crate::scanner::{kill_process, scan_ports};
+use crate::scanner::{kill_process, ScanOptions, Scanner};
 use crate::theme::theme;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -41,10 +39,12 @@ const COL_MEM: u16 = 9;
 const COL_UPTIME: u16 = 8;
 
 struct App {
-    sys: System,
+    scanner: Scanner,
+    /// Set after the first scan, which samples CPU before measuring.
+    primed: bool,
     entries: Vec<PortEntry>,
-    filtered: Vec<usize>,                                // indices into entries
-    browser_counts: HashMap<(u32, &'static str), usize>, // (pid, service) -> port count
+    filtered: Vec<usize>,                          // indices into entries
+    browser_counts: HashMap<(u32, String), usize>, // (pid, service) -> port count
     table_state: TableState,
     filter_text: String,
     filter_active: bool,
@@ -62,12 +62,9 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let mut sys = System::new();
-        // Discover processes and record a CPU baseline; later refreshes measure.
-        crate::scanner::refresh_all(&mut sys);
-        crate::scanner::refresh_all(&mut sys);
         Self {
-            sys,
+            scanner: Scanner::new(),
+            primed: false,
             entries: Vec::new(),
             filtered: Vec::new(),
             browser_counts: HashMap::new(),
@@ -88,9 +85,16 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        match scan_ports(&mut self.sys, self.show_tcp, self.show_udp) {
-            Ok(entries) => {
-                self.entries = entries;
+        let opts = ScanOptions {
+            tcp: self.show_tcp,
+            udp: self.show_udp,
+            sample_cpu: !self.primed,
+            ..ScanOptions::default()
+        };
+        match self.scanner.scan(&opts) {
+            Ok(snapshot) => {
+                self.primed = true;
+                self.entries = snapshot.entries;
                 self.sort_entries();
                 self.browser_counts = count_browser_groups(&self.entries);
                 self.apply_filter();
@@ -103,7 +107,7 @@ impl App {
     }
 
     fn sort_entries(&mut self) {
-        sort_entries(&mut self.entries, self.sort_field);
+        sort_entries(&mut self.entries, self.sort_field, false);
     }
 
     fn apply_filter(&mut self) {
@@ -118,34 +122,21 @@ impl App {
         let query = self.filter_text.to_lowercase();
 
         // Track which browser (pid, service) groups we've already included
-        let mut browser_seen: HashSet<(u32, &'static str)> = HashSet::new();
+        let mut browser_seen: HashSet<(u32, String)> = HashSet::new();
 
         self.filtered = self
             .entries
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                if !query.is_empty()
-                    && !port_matches(e.port, &query)
-                    && !e.process_name.to_lowercase().contains(&query)
-                    && !e
-                        .known_service
-                        .map(|s| s.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-                {
+                if !matches_filter(e, &query) {
                     return false;
                 }
-
                 // Deduplicate browser entries: keep only first per (pid, service)
-                if e.category == ServiceCategory::Browser {
-                    if let Some(svc) = e.known_service {
-                        if !browser_seen.insert((e.pid, svc)) {
-                            return false;
-                        }
-                    }
+                match e.browser_key() {
+                    Some(key) => browser_seen.insert(key),
+                    None => true,
                 }
-
-                true
             })
             .map(|(i, _)| i)
             .collect();
@@ -252,6 +243,23 @@ fn open_in_browser(_url: &str) -> bool {
     false
 }
 
+/// PID for display; `-` when the owner is not visible.
+fn pid_text(pid: Option<u32>) -> String {
+    pid.map_or_else(|| "-".to_string(), |p| p.to_string())
+}
+
+/// Snapshot what a kill confirmation needs; `None` when the owner is hidden.
+fn confirm_target(e: &PortEntry, force: bool) -> Option<(u32, String, u16, bool)> {
+    Some((e.pid?, e.process_name.clone(), e.port, force))
+}
+
+fn owner_hidden_msg(e: &PortEntry) -> String {
+    format!(
+        "Port {} is held by a process kav can't see — run kav with sudo",
+        e.port
+    )
+}
+
 pub fn run_tui() -> Result<()> {
     // Install panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -316,25 +324,28 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     // Kill confirmation dialog takes priority
     if let Some((pid, name, port, force)) = app.confirm_kill.take() {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => match kill_process(&app.sys, pid, force) {
-                Ok(()) => {
-                    app.status_msg = Some((
-                        format!(
-                            "{}Killed {} (PID {}) on port {}",
-                            if force { "Force " } else { "" },
-                            name,
-                            pid,
-                            port
-                        ),
-                        Instant::now(),
-                        false,
-                    ));
-                    app.refresh();
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                match kill_process(app.scanner.system(), pid, force) {
+                    Ok(()) => {
+                        app.status_msg = Some((
+                            format!(
+                                "{}Killed {} (PID {}) on port {}",
+                                if force { "Force " } else { "" },
+                                name,
+                                pid,
+                                port
+                            ),
+                            Instant::now(),
+                            false,
+                        ));
+                        app.refresh();
+                    }
+                    Err(e) => {
+                        app.status_msg =
+                            Some((format!("Kill failed: {}", e), Instant::now(), true));
+                    }
                 }
-                Err(e) => {
-                    app.status_msg = Some((format!("Kill failed: {}", e), Instant::now(), true));
-                }
-            },
+            }
             _ => {}
         }
         return;
@@ -352,7 +363,10 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 if let Some(selected) = app.table_state.selected() {
                     if let Some(&idx) = app.filtered.get(selected) {
                         let e = &app.entries[idx];
-                        app.confirm_kill = Some((e.pid, e.process_name.clone(), e.port, false));
+                        app.confirm_kill = confirm_target(e, false);
+                        if app.confirm_kill.is_none() {
+                            app.status_msg = Some((owner_hidden_msg(e), Instant::now(), true));
+                        }
                     }
                 }
                 return;
@@ -362,7 +376,10 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 if let Some(selected) = app.table_state.selected() {
                     if let Some(&idx) = app.filtered.get(selected) {
                         let e = &app.entries[idx];
-                        app.confirm_kill = Some((e.pid, e.process_name.clone(), e.port, true));
+                        app.confirm_kill = confirm_target(e, true);
+                        if app.confirm_kill.is_none() {
+                            app.status_msg = Some((owner_hidden_msg(e), Instant::now(), true));
+                        }
                     }
                 }
                 return;
@@ -633,15 +650,12 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
             };
 
             // For grouped browser entries, look up how many ports this (pid, service) has
-            let browser_count = if e.category == ServiceCategory::Browser {
-                e.known_service
-                    .and_then(|svc| app.browser_counts.get(&(e.pid, svc)).copied())
-                    .unwrap_or(1)
-            } else {
-                1
-            };
+            let browser_count = e
+                .browser_key()
+                .and_then(|key| app.browser_counts.get(&key).copied())
+                .unwrap_or(1);
 
-            let service_text = match e.known_service {
+            let service_text = match e.service_name() {
                 Some(svc) if browser_count > 1 => format!("{} ×{}", svc, browser_count),
                 Some(svc) => svc.to_string(),
                 None => "—".to_string(),
@@ -658,7 +672,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(e.protocol.to_string()).style(Style::default().fg(t.text_secondary)),
                 Cell::from(e.process_name.clone()).style(Style::default().fg(cat_color)),
                 Cell::from(service_text).style(Style::default().fg(cat_color)),
-                Cell::from(e.pid.to_string()).style(Style::default().fg(t.text_muted)),
+                Cell::from(pid_text(e.pid)).style(Style::default().fg(t.text_muted)),
                 Cell::from(format!("{:.1}%", e.cpu_percent)).style(Style::default().fg(cpu_color)),
                 Cell::from(e.memory_display()).style(Style::default().fg(t.text)),
                 Cell::from(e.uptime_display()).style(Style::default().fg(t.text_muted)),
@@ -724,12 +738,12 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             ]),
             Line::from(vec![
                 Span::styled("PID: ", Style::default().fg(t.text_secondary)),
-                Span::styled(entry.pid.to_string(), Style::default().fg(t.text)),
+                Span::styled(pid_text(entry.pid), Style::default().fg(t.text)),
             ]),
             Line::from(vec![
                 Span::styled("Service: ", Style::default().fg(t.text_secondary)),
                 Span::styled(
-                    entry.known_service.unwrap_or("Unknown"),
+                    entry.service_name().unwrap_or("Unknown"),
                     Style::default().fg(t.category_color(entry.category)),
                 ),
             ]),
@@ -998,9 +1012,7 @@ fn draw_kill_confirm(f: &mut Frame, pid: u32, name: &str, port: u16, force: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Protocol, ServiceCategory};
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::time::Duration;
+    use crate::models::{testutil, ServiceCategory, ServiceSource};
 
     fn make_entry(
         port: u16,
@@ -1010,18 +1022,13 @@ mod tests {
         cpu: f32,
         memory: f64,
     ) -> PortEntry {
-        PortEntry {
-            protocol: Protocol::Tcp,
-            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
-            pid: port as u32,
-            process_name: name.to_string(),
-            process_cmd: vec![],
-            cpu_percent: cpu,
-            memory_mb: memory,
-            uptime: Duration::from_secs(100),
-            known_service: service,
-            category,
+        let mut e = testutil::entry(port, port as u32, name);
+        e.cpu_percent = cpu;
+        e.memory_mb = memory;
+        e.category = category;
+        match service {
+            Some(svc) => testutil::with_service(e, svc, category, ServiceSource::Process),
+            None => e,
         }
     }
 
@@ -1141,27 +1148,7 @@ mod tests {
         app.filter_text = "next".to_string();
         app.apply_filter();
         assert_eq!(app.filtered.len(), 1);
-        assert_eq!(app.entries[app.filtered[0]].known_service, Some("Next.js"));
-    }
-
-    // --- port_matches unit tests ---
-
-    #[test]
-    fn port_matches_exact_numeric() {
-        assert!(port_matches(80, "80"));
-        assert!(port_matches(5432, "5432"));
-        assert!(!port_matches(8080, "80")); // must NOT substring-match
-        assert!(!port_matches(3800, "80"));
-        assert!(!port_matches(18080, "80"));
-    }
-
-    #[test]
-    fn port_matches_non_numeric_query_does_not_match_port() {
-        // Non-numeric queries (e.g. service names) never match a port number —
-        // they fall through to process name / service matching instead.
-        assert!(!port_matches(3000, "node"));
-        assert!(!port_matches(5432, "postgres"));
-        assert!(!port_matches(80, "http"));
+        assert_eq!(app.entries[app.filtered[0]].service_name(), Some("Next.js"));
     }
 
     #[test]
@@ -1372,19 +1359,15 @@ mod tests {
     // --- Browser grouping tests ---
 
     fn make_browser_entry(port: u16, pid: u32, service: &'static str) -> PortEntry {
-        PortEntry {
-            protocol: Protocol::Tcp,
-            local_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
-            pid,
-            process_name: "Google Chrome Helper".to_string(),
-            process_cmd: vec![],
-            cpu_percent: 1.0,
-            memory_mb: 50.0,
-            uptime: Duration::from_secs(100),
-            known_service: Some(service),
-            category: ServiceCategory::Browser,
-        }
+        let mut e = testutil::with_service(
+            testutil::entry(port, pid, "Google Chrome Helper"),
+            service,
+            ServiceCategory::Browser,
+            ServiceSource::Process,
+        );
+        e.cpu_percent = 1.0;
+        e.memory_mb = 50.0;
+        e
     }
 
     #[test]
@@ -1405,7 +1388,10 @@ mod tests {
         // 3 Chrome entries collapsed to 1, plus 1 node entry = 2
         assert_eq!(app.filtered.len(), 2);
         // The browser group count should be 3
-        assert_eq!(app.browser_counts.get(&(100, "Chrome")), Some(&3));
+        assert_eq!(
+            app.browser_counts.get(&(100, "Chrome".to_string())),
+            Some(&3)
+        );
     }
 
     #[test]
@@ -1436,7 +1422,10 @@ mod tests {
         ]);
         // Only 1 Chrome entry — no grouping, count is 1
         assert_eq!(app.filtered.len(), 2);
-        assert_eq!(app.browser_counts.get(&(100, "Chrome")), Some(&1));
+        assert_eq!(
+            app.browser_counts.get(&(100, "Chrome".to_string())),
+            Some(&1)
+        );
     }
 
     // --- Protocol cycling tests ---

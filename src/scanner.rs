@@ -1,154 +1,424 @@
-use std::collections::HashSet;
-use std::net::IpAddr;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::Result;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users};
 
-use crate::models::{PortEntry, Protocol};
-use crate::util::identify_service;
+use crate::models::{Client, PortEntry, ProcessRef, Protocol, ServiceCategory};
+use crate::util::identify;
 
-/// What every process refresh collects. `refresh_processes()` alone skips the
-/// command line, so request it explicitly (fetched once per process).
+/// What every listener refresh collects. `refresh_processes()` alone skips the
+/// command line, cwd and user, so request them explicitly (fetched once per process).
 pub fn refresh_kind() -> ProcessRefreshKind {
     ProcessRefreshKind::nothing()
         .with_cpu()
         .with_memory()
         .with_cmd(UpdateKind::OnlyIfNotSet)
+        .with_cwd(UpdateKind::OnlyIfNotSet)
+        .with_user(UpdateKind::OnlyIfNotSet)
 }
 
-/// Refresh all processes with [`refresh_kind`].
-pub fn refresh_all(sys: &mut System) {
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind());
+/// How container attribution runs during a scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContainerMode {
+    /// Never ask a container runtime.
+    #[default]
+    Off,
+    #[allow(dead_code)] // TODO(v0.2 Task 7)
+    /// Ask and wait (one-shot commands).
+    Blocking,
+    #[allow(dead_code)] // TODO(v0.2 Task 7)
+    /// Ask in the background and use the latest answer (TUI).
+    Background,
 }
 
-/// Create a System primed for accurate CPU readings in one-shot commands.
-///
-/// sysinfo needs three refreshes for a process it has not seen before:
-/// the first discovers it, the second records a CPU-time baseline, and the
-/// third measures. The measuring refresh happens in [`scan_ports`], so the
-/// sleep must sit between the baseline and that call. For the TUI, reuse a
-/// persistent System instead.
-pub fn new_system_with_cpu() -> System {
-    let mut sys = System::new();
-    refresh_all(&mut sys); // discover
-    refresh_all(&mut sys); // baseline
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    sys
+/// What a scan should collect.
+#[derive(Debug, Clone)]
+pub struct ScanOptions {
+    pub tcp: bool,
+    pub udp: bool,
+    /// Sample CPU over `MINIMUM_CPU_UPDATE_INTERVAL` before measuring (one-shot commands).
+    pub sample_cpu: bool,
+    #[allow(dead_code)] // TODO(v0.2 Task 7): container attribution
+    pub containers: ContainerMode,
 }
 
-/// Construct a PortEntry from raw socket + process data.
-/// Pure function — usable in unit tests without OS calls.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn make_port_entry(
-    protocol: Protocol,
-    local_addr: IpAddr,
-    port: u16,
-    pid: u32,
-    process_name: String,
-    process_cmd: Vec<String>,
-    cpu_percent: f32,
-    memory_mb: f64,
-    uptime: Duration,
-) -> PortEntry {
-    let (known_service, category) = identify_service(port, &process_name);
-    PortEntry {
-        protocol,
-        local_addr,
-        port,
-        pid,
-        process_name,
-        process_cmd,
-        cpu_percent,
-        memory_mb,
-        uptime,
-        known_service,
-        category,
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self {
+            tcp: true,
+            udp: true,
+            sample_cpu: false,
+            containers: ContainerMode::Off,
+        }
     }
 }
 
-/// Scan the system for all listening ports and map them to process info.
-/// Pass a persistent `System` for accurate CPU readings across refreshes.
-pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Vec<PortEntry>> {
-    let mut proto_flags = ProtocolFlags::empty();
-    if show_tcp {
-        proto_flags |= ProtocolFlags::TCP;
+/// Whether a snapshot includes every listening socket on the machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Running as root: every socket and owner is visible.
+    Complete,
+    /// macOS without root: other users' processes (system daemons) are not listed.
+    OtherUsersHidden,
+    /// Linux without root: this many listeners have no visible owner.
+    Unattributed(usize),
+}
+
+/// The result of one scan.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub entries: Vec<PortEntry>,
+    #[allow(dead_code)] // TODO(v0.2 Task 11a): hidden-socket hints
+    pub visibility: Visibility,
+}
+
+/// Socket classification used by [`group_sockets`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SocketKind {
+    Listen,
+    Established,
+    Other,
+    Udp,
+}
+
+/// One socket as reported by the OS, before grouping.
+#[derive(Debug, Clone)]
+pub(crate) struct RawSocket {
+    pub protocol: Protocol,
+    pub local: IpAddr,
+    pub port: u16,
+    pub remote: Option<SocketAddr>,
+    pub kind: SocketKind,
+    pub pids: Vec<u32>,
+    /// Owning user (Linux only); lets owner-less rows still show who holds them.
+    pub uid: Option<u32>,
+}
+
+/// A connected peer before process names are resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawClient {
+    pub addr: SocketAddr,
+    pub pid: Option<u32>,
+}
+
+/// Listening sockets merged per `(protocol, port, pid)`.
+#[derive(Debug, Clone)]
+pub(crate) struct Group {
+    pub protocol: Protocol,
+    pub port: u16,
+    pub pid: Option<u32>,
+    pub addrs: Vec<IpAddr>,
+    pub uid: Option<u32>,
+    pub clients: Vec<RawClient>,
+}
+
+fn owners(pids: &[u32]) -> Vec<Option<u32>> {
+    if pids.is_empty() {
+        vec![None]
+    } else {
+        pids.iter().copied().map(Some).collect()
     }
-    if show_udp {
-        proto_flags |= ProtocolFlags::UDP;
-    }
+}
 
-    let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
-
-    let sockets = get_sockets_info(af_flags, proto_flags)?;
-
-    refresh_all(sys);
-
-    let mut entries: Vec<PortEntry> = Vec::new();
-    let mut seen: HashSet<(u16, u32)> = HashSet::new();
-
-    for socket in &sockets {
-        let (protocol, local_addr, port) = match &socket.protocol_socket_info {
-            ProtocolSocketInfo::Tcp(tcp) => {
-                if tcp.state != TcpState::Listen {
-                    continue;
-                }
-                (Protocol::Tcp, tcp.local_addr, tcp.local_port)
-            }
-            ProtocolSocketInfo::Udp(udp) => (Protocol::Udp, udp.local_addr, udp.local_port),
+/// Merge raw sockets into one group per `(protocol, port, pid)`, ordered by
+/// port, protocol and PID. TCP listeners and bound UDP sockets become groups
+/// (UDP port 0 means unbound and is skipped); established TCP sockets become
+/// the clients of the listener they were accepted on.
+pub(crate) fn group_sockets(raw: &[RawSocket]) -> Vec<Group> {
+    let mut groups: BTreeMap<(u16, Protocol, Option<u32>), Group> = BTreeMap::new();
+    for s in raw {
+        let listening = match s.kind {
+            SocketKind::Listen => true,
+            SocketKind::Udp => s.port != 0,
+            SocketKind::Established | SocketKind::Other => false,
         };
-
-        for &pid in &socket.associated_pids {
-            if !seen.insert((port, pid)) {
-                continue;
+        if !listening {
+            continue;
+        }
+        for pid in owners(&s.pids) {
+            let g = groups
+                .entry((s.port, s.protocol, pid))
+                .or_insert_with(|| Group {
+                    protocol: s.protocol,
+                    port: s.port,
+                    pid,
+                    addrs: Vec::new(),
+                    uid: s.uid,
+                    clients: Vec::new(),
+                });
+            if !g.addrs.contains(&s.local) {
+                g.addrs.push(s.local);
             }
-
-            let pid_obj = sysinfo::Pid::from_u32(pid);
-            let (process_name, process_cmd, cpu_percent, memory_mb, uptime) =
-                if let Some(proc) = sys.process(pid_obj) {
-                    let name = proc.name().to_string_lossy().to_string();
-                    let cmd: Vec<String> = proc
-                        .cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .collect();
-                    let cpu = proc.cpu_usage();
-                    let mem = proc.memory() as f64 / (1024.0 * 1024.0);
-                    let up = Duration::from_secs(proc.run_time());
-                    (name, cmd, cpu, mem, up)
-                } else {
-                    // Race condition: process exited between socket enumeration
-                    // and process lookup. Use a clear placeholder rather than "?".
-                    (
-                        String::from("<exited>"),
-                        Vec::new(),
-                        0.0,
-                        0.0,
-                        Duration::ZERO,
-                    )
-                };
-
-            entries.push(make_port_entry(
-                protocol,
-                local_addr,
-                port,
-                pid,
-                process_name,
-                process_cmd,
-                cpu_percent,
-                memory_mb,
-                uptime,
-            ));
+            g.uid = g.uid.or(s.uid);
         }
     }
 
-    Ok(entries)
+    // Established sockets by their local endpoint, so a loopback client's
+    // own socket can be found from the server side's remote address.
+    let established = || {
+        raw.iter()
+            .filter(|s| s.protocol == Protocol::Tcp && s.kind == SocketKind::Established)
+    };
+    let by_local: HashMap<SocketAddr, &[u32]> = established()
+        .map(|s| {
+            (
+                SocketAddr::new(s.local.to_canonical(), s.port),
+                s.pids.as_slice(),
+            )
+        })
+        .collect();
+    for s in established() {
+        let Some(remote) = s.remote else { continue };
+        let addr = SocketAddr::new(remote.ip().to_canonical(), remote.port());
+        for pid in owners(&s.pids) {
+            if let Some(g) = groups.get_mut(&(s.port, Protocol::Tcp, pid)) {
+                let client_pid = by_local.get(&addr).and_then(|p| p.first().copied());
+                g.clients.push(RawClient {
+                    addr,
+                    pid: client_pid,
+                });
+            }
+        }
+    }
+
+    groups
+        .into_values()
+        .map(|mut g| {
+            g.addrs.sort();
+            g
+        })
+        .collect()
+}
+
+/// True when kav runs with root privileges (sees every socket owner).
+pub fn is_root() -> bool {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+fn visibility_for(entries: &[PortEntry], root: bool) -> Visibility {
+    if root {
+        return Visibility::Complete;
+    }
+    let unattributed = entries.iter().filter(|e| e.pid.is_none()).count();
+    if unattributed > 0 {
+        Visibility::Unattributed(unattributed)
+    } else if cfg!(target_os = "macos") {
+        Visibility::OtherUsersHidden
+    } else {
+        Visibility::Complete
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn socket_uid(s: &netstat2::SocketInfo) -> Option<u32> {
+    Some(s.uid)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn socket_uid(_s: &netstat2::SocketInfo) -> Option<u32> {
+    None
+}
+
+/// Enumerate sockets from the OS.
+fn collect_sockets(tcp: bool, udp: bool) -> Result<Vec<RawSocket>> {
+    let mut proto_flags = ProtocolFlags::empty();
+    if tcp {
+        proto_flags |= ProtocolFlags::TCP;
+    }
+    if udp {
+        proto_flags |= ProtocolFlags::UDP;
+    }
+    let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
+    let sockets = get_sockets_info(af_flags, proto_flags)?;
+    Ok(sockets
+        .iter()
+        .map(|s| match &s.protocol_socket_info {
+            ProtocolSocketInfo::Tcp(t) => {
+                let kind = match t.state {
+                    TcpState::Listen => SocketKind::Listen,
+                    TcpState::Established => SocketKind::Established,
+                    _ => SocketKind::Other,
+                };
+                RawSocket {
+                    protocol: Protocol::Tcp,
+                    local: t.local_addr,
+                    port: t.local_port,
+                    remote: (kind == SocketKind::Established)
+                        .then(|| SocketAddr::new(t.remote_addr, t.remote_port)),
+                    kind,
+                    pids: s.associated_pids.clone(),
+                    uid: socket_uid(s),
+                }
+            }
+            ProtocolSocketInfo::Udp(u) => RawSocket {
+                protocol: Protocol::Udp,
+                local: u.local_addr,
+                port: u.local_port,
+                remote: None,
+                kind: SocketKind::Udp,
+                pids: s.associated_pids.clone(),
+                uid: socket_uid(s),
+            },
+        })
+        .collect())
+}
+
+/// Scans listening sockets and maps them to process details.
+///
+/// Keep one `Scanner` alive across refreshes (TUI, watch mode): CPU usage is
+/// measured between consecutive refreshes of the same `System`.
+pub struct Scanner {
+    sys: System,
+    users: Users,
+}
+
+impl Scanner {
+    pub fn new() -> Self {
+        Self {
+            sys: System::new(),
+            users: Users::new_with_refreshed_list(),
+        }
+    }
+
+    /// The process table as of the last scan.
+    pub fn system(&self) -> &System {
+        &self.sys
+    }
+
+    fn refresh(&mut self, pids: &[Pid], kind: ProcessRefreshKind) {
+        if !pids.is_empty() {
+            self.sys
+                .refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, kind);
+        }
+    }
+
+    /// Take a snapshot of every listening socket.
+    ///
+    /// Only socket-owning processes are refreshed (plus, by name only, their
+    /// parents and loopback clients). With `sample_cpu`, sysinfo gets the three
+    /// refreshes it needs for a process it has not seen before — discover,
+    /// baseline, then measure after `MINIMUM_CPU_UPDATE_INTERVAL`.
+    pub fn scan(&mut self, opts: &ScanOptions) -> Result<Snapshot> {
+        let groups = group_sockets(&collect_sockets(opts.tcp, opts.udp)?);
+
+        let mut pids: Vec<Pid> = groups
+            .iter()
+            .filter_map(|g| g.pid)
+            .map(Pid::from_u32)
+            .collect();
+        pids.sort();
+        pids.dedup();
+        if opts.sample_cpu {
+            self.refresh(&pids, refresh_kind()); // discover
+            self.refresh(&pids, refresh_kind()); // baseline
+            std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        }
+        self.refresh(&pids, refresh_kind()); // measure
+
+        let mut extra: HashSet<Pid> = groups
+            .iter()
+            .flat_map(|g| g.clients.iter().filter_map(|c| c.pid))
+            .map(Pid::from_u32)
+            .collect();
+        extra.extend(
+            pids.iter()
+                .filter_map(|pid| self.sys.process(*pid).and_then(|p| p.parent())),
+        );
+        let extra: Vec<Pid> = extra.into_iter().filter(|p| !pids.contains(p)).collect();
+        self.refresh(&extra, ProcessRefreshKind::nothing());
+
+        let entries: Vec<PortEntry> = groups.into_iter().map(|g| self.build_entry(g)).collect();
+        let visibility = visibility_for(&entries, is_root());
+        Ok(Snapshot {
+            entries,
+            visibility,
+        })
+    }
+
+    fn process_name(&self, pid: u32) -> Option<String> {
+        self.sys
+            .process(Pid::from_u32(pid))
+            .map(|p| p.name().to_string_lossy().into_owned())
+    }
+
+    fn user_name(&self, uid: &Uid) -> Option<String> {
+        self.users.get_user_by_id(uid).map(|u| u.name().to_string())
+    }
+
+    fn build_entry(&self, g: Group) -> PortEntry {
+        let mut e = PortEntry {
+            protocol: g.protocol,
+            port: g.port,
+            addrs: g.addrs,
+            pid: g.pid,
+            process_name: String::from("?"),
+            process_cmd: Vec::new(),
+            cwd: None,
+            project: None,
+            user: None,
+            parent: None,
+            start_time: 0,
+            cpu_percent: 0.0,
+            memory_mb: 0.0,
+            uptime: Duration::ZERO,
+            service: None,
+            category: ServiceCategory::Unknown,
+            container: None,
+            clients: g
+                .clients
+                .into_iter()
+                .map(|c| Client {
+                    addr: c.addr,
+                    pid: c.pid,
+                    process: c.pid.and_then(|p| self.process_name(p)),
+                })
+                .collect(),
+        };
+        match g.pid.map(|pid| self.sys.process(Pid::from_u32(pid))) {
+            Some(Some(p)) => {
+                e.process_name = p.name().to_string_lossy().into_owned();
+                e.process_cmd = p
+                    .cmd()
+                    .iter()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .collect();
+                e.cwd = p.cwd().map(|c| c.to_path_buf());
+                e.user = p.user_id().and_then(|uid| self.user_name(uid));
+                e.parent = p.parent().map(|pp| ProcessRef {
+                    pid: pp.as_u32(),
+                    name: self.process_name(pp.as_u32()).unwrap_or_default(),
+                });
+                e.start_time = p.start_time();
+                e.cpu_percent = p.cpu_usage();
+                e.memory_mb = p.memory() as f64 / (1024.0 * 1024.0);
+                e.uptime = Duration::from_secs(p.run_time());
+            }
+            // Race: the process exited between socket enumeration and lookup.
+            Some(None) => e.process_name = String::from("<exited>"),
+            // Owner not visible to this user; the kernel still tells us the uid on Linux.
+            None => {
+                e.user = g
+                    .uid
+                    .and_then(|uid| Uid::try_from(uid as usize).ok())
+                    .and_then(|uid| self.user_name(&uid));
+            }
+        }
+        e.service = identify(e.port, &e.process_name);
+        e.category = e
+            .service
+            .as_ref()
+            .map_or(ServiceCategory::Unknown, |s| s.category);
+        e
+    }
 }
 
 /// Kill a process by PID. Pass a `System` that has been refreshed.
 pub fn kill_process(sys: &System, pid: u32, force: bool) -> Result<()> {
-    let pid_obj = sysinfo::Pid::from_u32(pid);
+    let pid_obj = Pid::from_u32(pid);
     let proc = sys
         .process(pid_obj)
         .ok_or_else(|| anyhow::anyhow!("Process with PID {} not found", pid))?;
@@ -162,122 +432,181 @@ pub fn kill_process(sys: &System, pid: u32, force: bool) -> Result<()> {
     if proc.kill_with(signal).unwrap_or(false) {
         Ok(())
     } else {
-        anyhow::bail!("Failed to kill PID {}. Try running with sudo.", pid,)
+        anyhow::bail!("Failed to kill PID {}. Try running with sudo.", pid)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Protocol, ServiceCategory};
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
-    fn localhost() -> IpAddr {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    const LO4: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    const LO6: IpAddr = IpAddr::V6(Ipv6Addr::LOCALHOST);
+
+    fn sock(
+        protocol: Protocol,
+        local: IpAddr,
+        port: u16,
+        kind: SocketKind,
+        pids: &[u32],
+    ) -> RawSocket {
+        RawSocket {
+            protocol,
+            local,
+            port,
+            remote: None,
+            kind,
+            pids: pids.to_vec(),
+            uid: None,
+        }
+    }
+
+    fn keys(groups: &[Group]) -> Vec<(Protocol, u16, Option<u32>)> {
+        groups.iter().map(|g| (g.protocol, g.port, g.pid)).collect()
     }
 
     #[test]
-    fn make_port_entry_identifies_postgres() {
-        let entry = make_port_entry(
-            Protocol::Tcp,
-            localhost(),
-            5432,
-            1000,
-            "postmaster".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
+    fn group_keeps_tcp_and_udp_separate() {
+        let raw = [
+            sock(Protocol::Tcp, LO4, 47001, SocketKind::Listen, &[7]),
+            sock(Protocol::Udp, LO4, 47001, SocketKind::Udp, &[7]),
+        ];
+        assert_eq!(
+            keys(&group_sockets(&raw)),
+            vec![
+                (Protocol::Tcp, 47001, Some(7)),
+                (Protocol::Udp, 47001, Some(7))
+            ]
         );
-        assert_eq!(entry.category, ServiceCategory::Database);
-        assert_eq!(entry.known_service, Some("PostgreSQL"));
-        assert_eq!(entry.port, 5432);
-        assert_eq!(entry.pid, 1000);
     }
 
     #[test]
-    fn make_port_entry_identifies_redis() {
-        let entry = make_port_entry(
-            Protocol::Tcp,
-            localhost(),
-            6379,
-            2000,
-            "redis-server".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
-        );
-        assert_eq!(entry.category, ServiceCategory::Cache);
-        assert_eq!(entry.known_service, Some("Redis"));
+    fn group_merges_addresses() {
+        let raw = [
+            sock(Protocol::Tcp, LO6, 5432, SocketKind::Listen, &[9]),
+            sock(Protocol::Tcp, LO4, 5432, SocketKind::Listen, &[9]),
+        ];
+        let groups = group_sockets(&raw);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].addrs, vec![LO4, LO6]);
     }
 
     #[test]
-    fn make_port_entry_identifies_node_by_port() {
-        let entry = make_port_entry(
-            Protocol::Tcp,
-            localhost(),
-            3000,
-            3000,
-            "node".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
-        );
-        assert_eq!(entry.category, ServiceCategory::DevServer);
-    }
-
-    #[test]
-    fn make_port_entry_unknown_service() {
-        let entry = make_port_entry(
-            Protocol::Tcp,
-            localhost(),
-            9999,
-            4000,
-            "my-custom-app".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
-        );
-        assert_eq!(entry.category, ServiceCategory::Unknown);
-        assert_eq!(entry.known_service, None);
-    }
-
-    #[test]
-    fn make_port_entry_unknown_process_preserves_fields() {
-        let entry = make_port_entry(
+    fn group_skips_udp_port_zero() {
+        let raw = [sock(
             Protocol::Udp,
-            localhost(),
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             0,
-            9999,
-            "?".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
-        );
-        assert_eq!(entry.process_name, "?");
-        assert_eq!(entry.protocol, Protocol::Udp);
-        assert_eq!(entry.known_service, None);
+            SocketKind::Udp,
+            &[3],
+        )];
+        assert!(group_sockets(&raw).is_empty());
     }
 
     #[test]
-    fn make_port_entry_identifies_by_process_name_prefix() {
-        // postgres process detected even on a non-standard port
-        let entry = make_port_entry(
+    fn group_ignores_non_listening_tcp() {
+        let raw = [
+            sock(Protocol::Tcp, LO4, 5432, SocketKind::Other, &[9]),
+            sock(Protocol::Tcp, LO4, 60000, SocketKind::Established, &[9]),
+        ];
+        assert!(group_sockets(&raw).is_empty());
+    }
+
+    #[test]
+    fn group_keeps_ownerless_sockets() {
+        let mut s = sock(
             Protocol::Tcp,
-            localhost(),
-            54321,
-            5000,
-            "postgres".to_string(),
-            vec![],
-            0.0,
-            0.0,
-            Duration::ZERO,
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            47005,
+            SocketKind::Listen,
+            &[],
         );
-        assert_eq!(entry.category, ServiceCategory::Database);
-        assert_eq!(entry.known_service, Some("PostgreSQL"));
+        s.uid = Some(501);
+        let groups = group_sockets(&[s]);
+        assert_eq!(keys(&groups), vec![(Protocol::Tcp, 47005, None)]);
+        assert_eq!(groups[0].uid, Some(501));
+    }
+
+    #[test]
+    fn clients_counted_for_established() {
+        let mut server_side = sock(Protocol::Tcp, LO4, 5432, SocketKind::Established, &[9]);
+        server_side.remote = Some(SocketAddr::new(LO4, 60000));
+        let mut client_side = sock(Protocol::Tcp, LO4, 60000, SocketKind::Established, &[44]);
+        client_side.remote = Some(SocketAddr::new(LO4, 5432));
+        let raw = [
+            sock(Protocol::Tcp, LO4, 5432, SocketKind::Listen, &[9]),
+            server_side,
+            client_side,
+        ];
+        let groups = group_sockets(&raw);
+        assert_eq!(keys(&groups), vec![(Protocol::Tcp, 5432, Some(9))]);
+        assert_eq!(
+            groups[0].clients,
+            vec![RawClient {
+                addr: SocketAddr::new(LO4, 60000),
+                pid: Some(44)
+            }]
+        );
+    }
+
+    #[test]
+    fn clients_match_ipv4_mapped_addresses() {
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let mut server_side = sock(Protocol::Tcp, mapped, 3000, SocketKind::Established, &[5]);
+        server_side.remote = Some(SocketAddr::new(mapped, 61000));
+        let mut client_side = sock(Protocol::Tcp, LO4, 61000, SocketKind::Established, &[77]);
+        client_side.remote = Some(SocketAddr::new(LO4, 3000));
+        let raw = [
+            sock(
+                Protocol::Tcp,
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                3000,
+                SocketKind::Listen,
+                &[5],
+            ),
+            server_side,
+            client_side,
+        ];
+        let groups = group_sockets(&raw);
+        assert_eq!(groups[0].clients.len(), 1);
+        assert_eq!(groups[0].clients[0].pid, Some(77));
+        assert_eq!(groups[0].clients[0].addr, SocketAddr::new(LO4, 61000));
+    }
+
+    #[test]
+    fn visibility_reports_ownerless_rows_and_root() {
+        let mut hidden = crate::models::testutil::entry(47005, 1, "?");
+        hidden.pid = None;
+        let visible = crate::models::testutil::entry(3000, 2, "node");
+        assert_eq!(
+            visibility_for(&[hidden.clone(), visible.clone()], false),
+            Visibility::Unattributed(1)
+        );
+        assert_eq!(visibility_for(&[hidden], true), Visibility::Complete);
+        let expected = if cfg!(target_os = "macos") {
+            Visibility::OtherUsersHidden
+        } else {
+            Visibility::Complete
+        };
+        assert_eq!(visibility_for(&[visible], false), expected);
+    }
+
+    #[test]
+    fn scan_finds_own_listener_with_details() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let snap = Scanner::new().scan(&ScanOptions::default()).unwrap();
+        let e = snap
+            .entries
+            .iter()
+            .find(|e| e.port == port && e.protocol == Protocol::Tcp)
+            .expect("own listener in snapshot");
+        assert_eq!(e.pid, Some(std::process::id()));
+        assert_eq!(e.addrs, vec![LO4]);
+        assert!(!e.process_cmd.is_empty(), "command line collected");
+        assert!(e.cwd.is_some(), "cwd collected");
+        assert!(e.user.is_some(), "user resolved");
+        assert!(e.parent.is_some(), "parent resolved");
     }
 }
