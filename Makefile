@@ -36,7 +36,7 @@ current-version: ## Output current version from Cargo.toml
 
 # Internal Release Helpers
 check-git-clean:
-	@if [ -n "$$(git status --porcelain)" ]; then \
+	@if [ -n "$$(git status --porcelain --untracked-files=no)" ]; then \
 		echo "\033[31mError: Git working directory is dirty. Please commit or stash changes first.\033[0m"; \
 		exit 1; \
 	fi
