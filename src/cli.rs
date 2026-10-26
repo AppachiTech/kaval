@@ -1,10 +1,12 @@
 use std::io::Write;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
 pub use crate::models::SortField;
+use crate::output::ColorChoice;
 
 #[derive(Parser)]
 #[command(
@@ -16,37 +18,59 @@ pub use crate::models::SortField;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// When to use colours
+    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
+}
+
+/// Parse a refresh interval in seconds (fractions allowed, at least 0.1).
+pub fn parse_interval(s: &str) -> Result<Duration, String> {
+    let secs: f64 = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a number of seconds"))?;
+    if !secs.is_finite() || secs < 0.1 {
+        return Err("interval must be at least 0.1 seconds".to_string());
+    }
+    Ok(Duration::from_secs_f64(secs))
 }
 
 #[derive(Subcommand)]
 pub enum Command {
     /// List all listening ports (one-shot table output)
-    ///
-    /// Prints a table of all listening TCP and UDP ports with process name,
-    /// PID, CPU, memory, and uptime. Exits 0 always.
-    #[command(long_about = "List all listening ports (one-shot table output).
+    #[command(long_about = "List all listening ports.
 
-Prints a table of all listening TCP and UDP ports with process name, PID, CPU, memory,
-and uptime. Combine with --sort and --filter for scripting.
+Prints a table of listening TCP and UDP ports with bind address, process, service,
+project, PID, CPU, memory and uptime. A trailing `?` marks a service guessed from the
+port number alone; BIND `*` means reachable from other machines.
 
 Exit codes:
-  0  Always (even if no ports are listening)")]
+  0  Success (even if no ports are listening)
+  2  Error")]
     List {
-        /// Output as JSON
+        /// Output as JSON (schema v2); with --watch, one document per line (NDJSON)
         #[arg(long)]
         json: bool,
 
-        /// Sort output (port, name, cpu, mem)
-        #[arg(long, value_enum)]
-        sort: Option<SortField>,
+        /// Sort by
+        #[arg(long, value_enum, default_value_t = SortField::Port)]
+        sort: SortField,
 
-        /// Filter by port number (exact), process name, or service (case-insensitive substring)
+        /// Reverse the sort order
+        #[arg(long, short = 'r')]
+        reverse: bool,
+
+        /// Filter: exact port or PID, or text in process, service, command, project, container or user
         #[arg(long, short = 'f')]
         filter: Option<String>,
 
-        /// Refresh in-place every 2 seconds. Press Ctrl+C to exit. Incompatible with --json.
+        /// Refresh continuously; Ctrl+C to exit
         #[arg(long, short = 'w')]
         watch: bool,
+
+        /// Seconds between refreshes with --watch
+        #[arg(long, value_name = "SECS", default_value = "2", value_parser = parse_interval)]
+        interval: Duration,
 
         /// Show only TCP ports
         #[arg(long)]
@@ -55,6 +79,10 @@ Exit codes:
         /// Show only UDP ports
         #[arg(long)]
         udp: bool,
+
+        /// Show only listeners reachable from other machines (bound to * or a LAN address)
+        #[arg(long)]
+        exposed: bool,
     },
 
     /// Check what's running on specific port(s)

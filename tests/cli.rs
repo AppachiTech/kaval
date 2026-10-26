@@ -277,23 +277,6 @@ fn cli_kill_nonexistent_port_no_prompt() {
 }
 
 #[test]
-fn cli_list_watch_json_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_kav"))
-        .args(["list", "--watch", "--json"])
-        .output()
-        .unwrap();
-    assert!(
-        !output.status.success(),
-        "--watch and --json must be mutually exclusive"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("mutually exclusive"),
-        "error message should mention mutual exclusion"
-    );
-}
-
-#[test]
 fn cli_list_watch_flag_in_help() {
     let output = Command::new(env!("CARGO_BIN_EXE_kav"))
         .args(["list", "--help"])
@@ -334,4 +317,75 @@ fn cli_completions_bash() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.is_empty(), "completions should produce output");
+}
+
+#[test]
+fn list_exposed_filters_loopback() {
+    let exposed = Helper::spawn("exposed");
+    let local = Helper::spawn("tcp");
+    let doc = json_of(&kav(&["list", "--json", "--exposed"]));
+    assert!(
+        !json_ports(&doc, exposed.port).is_empty(),
+        "exposed helper listed"
+    );
+    assert!(
+        json_ports(&doc, local.port).is_empty(),
+        "loopback helper filtered out"
+    );
+    for row in doc["ports"].as_array().unwrap() {
+        assert_eq!(row["exposed"], true, "{row}");
+    }
+}
+
+#[test]
+fn list_reverse_sorts_descending() {
+    let _a = Helper::spawn("tcp");
+    let _b = Helper::spawn("tcp");
+    let doc = json_of(&kav(&["list", "--json", "--reverse"]));
+    let ports: Vec<u64> = doc["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["port"].as_u64().unwrap())
+        .collect();
+    assert!(ports.len() >= 2);
+    assert!(
+        ports.windows(2).all(|w| w[0] >= w[1]),
+        "ports not descending: {ports:?}"
+    );
+}
+
+#[test]
+fn watch_json_emits_ndjson() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["list", "--watch", "--json", "--interval", "0.3"])
+        .stdout(Stdio::piped())
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok).take(2) {
+            let _ = tx.send(line);
+        }
+    });
+    let mut frames = Vec::new();
+    for _ in 0..2 {
+        frames.push(
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("watch frame"),
+        );
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    for frame in frames {
+        let v: serde_json::Value =
+            serde_json::from_str(&frame).expect("frame is one JSON document");
+        assert_eq!(v["schema"], 2);
+        assert!(v["timestamp"].is_u64(), "frame has a timestamp: {frame}");
+        assert!(v["ports"].is_array());
+    }
 }

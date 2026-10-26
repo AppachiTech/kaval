@@ -1,4 +1,5 @@
 mod cli;
+mod cmd;
 mod docker;
 mod killer;
 mod models;
@@ -12,55 +13,36 @@ mod ui;
 
 use std::collections::HashSet;
 use std::io::{self, BufRead, IsTerminal, Write};
+use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
-use models::{filter_entries, sort_entries, SortField};
 use scanner::{kill_process, ContainerMode, ScanOptions, Scanner};
 
-/// Refresh `kav list` output in-place on the same screen.
-/// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
-fn run_watch(
-    sort: Option<SortField>,
-    filter: Option<&str>,
-    show_tcp: bool,
-    show_udp: bool,
-) -> Result<()> {
-    use ratatui::crossterm::{cursor, execute, terminal};
+/// True when an error chain ends in a closed pipe (e.g. `kav list | head`).
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|e| {
+        e.downcast_ref::<io::Error>()
+            .is_some_and(|io| io.kind() == io::ErrorKind::BrokenPipe)
+            || e.downcast_ref::<serde_json::Error>()
+                .and_then(|j| j.io_error_kind())
+                == Some(io::ErrorKind::BrokenPipe)
+    })
+}
 
-    let color = io::stdout().is_terminal();
-    let mut scanner = Scanner::new();
-    let mut opts = ScanOptions {
-        tcp: show_tcp,
-        udp: show_udp,
-        sample_cpu: true,
-        containers: ContainerMode::Blocking,
-    };
-
-    loop {
-        execute!(
-            io::stdout(),
-            terminal::Clear(terminal::ClearType::All),
-            cursor::MoveTo(0, 0)
-        )?;
-        println!("kav watch  —  Ctrl+C to exit  —  refreshing every 2s\n");
-
-        let mut entries = scanner.scan(&opts)?.entries;
-        opts.sample_cpu = false; // the persistent scanner measures between refreshes
-        sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
-        if let Some(pattern) = filter {
-            filter_entries(&mut entries, pattern);
+fn main() -> ExitCode {
+    match run(Cli::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if is_broken_pipe(&e) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("kav: error: {e:#}");
+            ExitCode::from(2)
         }
-        output::print_table(&entries, color);
-
-        std::thread::sleep(std::time::Duration::from_secs(2));
     }
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-
+fn run(cli: Cli) -> Result<()> {
     match cli.command {
         None => {
             // Default: launch TUI
@@ -70,44 +52,31 @@ fn main() -> Result<()> {
         Some(Command::List {
             json,
             sort,
+            reverse,
             filter,
             watch,
+            interval,
             tcp,
             udp,
+            exposed,
         }) => {
-            // If neither --tcp nor --udp specified, show both (default)
-            let (show_tcp, show_udp) = match (tcp, udp) {
+            // Neither --tcp nor --udp means both
+            let (tcp, udp) = match (tcp, udp) {
                 (false, false) => (true, true),
                 other => other,
             };
-
-            if watch {
-                if json {
-                    anyhow::bail!("--watch and --json are mutually exclusive");
-                }
-                return run_watch(sort, filter.as_deref(), show_tcp, show_udp);
-            }
-            let opts = ScanOptions {
-                tcp: show_tcp,
-                udp: show_udp,
-                sample_cpu: true,
-                containers: ContainerMode::Blocking,
+            let args = cmd::list::ListArgs {
+                json,
+                sort,
+                reverse,
+                filter,
+                watch,
+                interval,
+                tcp,
+                udp,
+                exposed,
             };
-            let snapshot = Scanner::new().scan(&opts)?;
-            let visibility = snapshot.visibility;
-            let mut entries = snapshot.entries;
-            sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
-            if let Some(ref pattern) = filter {
-                filter_entries(&mut entries, pattern);
-            }
-            if json {
-                output::json::write_pretty(
-                    &output::json::list_doc(&entries, visibility, None),
-                    &mut io::stdout().lock(),
-                )?;
-            } else {
-                output::print_table(&entries, io::stdout().is_terminal());
-            }
+            cmd::list::run(&args, cli.color)?;
         }
 
         Some(Command::Check { ports }) => {

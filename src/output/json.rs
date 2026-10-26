@@ -226,7 +226,6 @@ pub fn write_pretty<T: Serialize>(doc: &T, w: &mut impl Write) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11a)
 /// Compact single-line document (NDJSON frame) followed by a newline.
 pub fn write_line<T: Serialize>(doc: &T, w: &mut impl Write) -> Result<()> {
     serde_json::to_writer(&mut *w, doc)?;

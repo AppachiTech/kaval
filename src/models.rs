@@ -57,7 +57,6 @@ pub struct Service {
 }
 
 /// Who can reach a listener, derived from its bind addresses.
-#[allow(dead_code)] // TODO(v0.2 Task 11a): BIND column / --exposed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exposure {
     /// Bound to loopback only (127.0.0.1 / ::1).
@@ -158,7 +157,6 @@ impl PortEntry {
     }
 
     /// Service name for display; port-only guesses get a trailing `?`.
-    #[allow(dead_code)] // TODO(v0.2 Task 11a)
     pub fn service_display(&self) -> String {
         match &self.service {
             Some(s) if s.source == ServiceSource::Port => format!("{}?", s.name),
@@ -168,7 +166,6 @@ impl PortEntry {
     }
 
     /// The widest exposure among the bind addresses.
-    #[allow(dead_code)] // TODO(v0.2 Task 11a)
     pub fn exposure(&self) -> Exposure {
         let mut exposure = Exposure::Loopback;
         for addr in &self.addrs {
@@ -184,13 +181,11 @@ impl PortEntry {
     }
 
     /// True when the listener is reachable from other machines.
-    #[allow(dead_code)] // TODO(v0.2 Task 11a)
     pub fn is_exposed(&self) -> bool {
         self.exposure() != Exposure::Loopback
     }
 
     /// Compact bind column: `localhost`, `*` (all interfaces) or the address.
-    #[allow(dead_code)] // TODO(v0.2 Task 11a)
     pub fn bind_display(&self) -> String {
         match self.exposure() {
             Exposure::Loopback => "localhost".to_string(),
