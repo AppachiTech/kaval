@@ -63,8 +63,9 @@ struct App {
 impl App {
     fn new() -> Self {
         let mut sys = System::new();
-        // First refresh establishes baseline for CPU calculation
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        // Discover processes and record a CPU baseline; later refreshes measure.
+        crate::scanner::refresh_all(&mut sys);
+        crate::scanner::refresh_all(&mut sys);
         Self {
             sys,
             entries: Vec::new(),

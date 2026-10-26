@@ -4,18 +4,37 @@ use std::time::Duration;
 
 use anyhow::Result;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::models::{PortEntry, Protocol};
 use crate::util::identify_service;
 
-/// Create a System with the two-refresh dance needed for accurate CPU usage.
-/// Use this for one-shot commands. For the TUI, reuse a persistent System instead.
+/// What every process refresh collects. `refresh_processes()` alone skips the
+/// command line, so request it explicitly (fetched once per process).
+pub fn refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::nothing()
+        .with_cpu()
+        .with_memory()
+        .with_cmd(UpdateKind::OnlyIfNotSet)
+}
+
+/// Refresh all processes with [`refresh_kind`].
+pub fn refresh_all(sys: &mut System) {
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind());
+}
+
+/// Create a System primed for accurate CPU readings in one-shot commands.
+///
+/// sysinfo needs three refreshes for a process it has not seen before:
+/// the first discovers it, the second records a CPU-time baseline, and the
+/// third measures. The measuring refresh happens in [`scan_ports`], so the
+/// sleep must sit between the baseline and that call. For the TUI, reuse a
+/// persistent System instead.
 pub fn new_system_with_cpu() -> System {
     let mut sys = System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    refresh_all(&mut sys); // discover
+    refresh_all(&mut sys); // baseline
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     sys
 }
 
@@ -64,7 +83,7 @@ pub fn scan_ports(sys: &mut System, show_tcp: bool, show_udp: bool) -> Result<Ve
 
     let sockets = get_sockets_info(af_flags, proto_flags)?;
 
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    refresh_all(sys);
 
     let mut entries: Vec<PortEntry> = Vec::new();
     let mut seen: HashSet<(u16, u32)> = HashSet::new();

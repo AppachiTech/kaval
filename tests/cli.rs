@@ -39,7 +39,6 @@ fn check_reports_helper_pid() {
 }
 
 #[test]
-#[ignore = "red until Task 4a fixes CPU sampling"]
 fn list_cpu_reflects_busy_process() {
     let helper = Helper::spawn("busy");
     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -53,7 +52,6 @@ fn list_cpu_reflects_busy_process() {
 }
 
 #[test]
-#[ignore = "red until Task 4a collects command lines"]
 fn check_shows_command_line() {
     let helper = Helper::spawn("tcp");
     let out = kav(&["check", &helper.port.to_string()]);
