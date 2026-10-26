@@ -5,6 +5,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
+use crate::killer::Signal;
 pub use crate::models::SortField;
 use crate::output::ColorChoice;
 
@@ -22,6 +23,21 @@ pub struct Cli {
     /// When to use colours
     #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
+}
+
+fn parse_signal(s: &str) -> Result<Signal, String> {
+    s.parse()
+}
+
+/// Parse a timeout in seconds (fractions allowed, 0 to 3600).
+fn parse_timeout(s: &str) -> Result<Duration, String> {
+    let secs: f64 = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a number of seconds"))?;
+    if !secs.is_finite() || !(0.0..=3600.0).contains(&secs) {
+        return Err("timeout must be between 0 and 3600 seconds".to_string());
+    }
+    Ok(Duration::from_secs_f64(secs))
 }
 
 /// Parse a refresh interval in seconds (fractions allowed, at least 0.1).
@@ -119,29 +135,60 @@ Exit codes:
     },
 
     /// Kill the process(es) listening on port(s)
-    ///
-    /// Exits 0 if at least one process was killed, 1 if nothing was listening.
-    #[command(long_about = "Kill the process(es) listening on port(s).
+    #[command(
+        long_about = "Stop the process(es) or container(s) listening on port(s).
 
-Sends SIGTERM by default. Use --force for SIGKILL. Prompts for confirmation
-when running in an interactive terminal unless --yes or --force is passed.
+Sends SIGTERM and waits (up to --timeout) until each process has exited, so \"Stopped\"
+means the port is really free. Ports published by a Docker container are freed with
+`docker stop`; container runtimes, init and system services are never killed unless
+--allow-protected is given. Asks for confirmation in a terminal unless --yes.
 
 Exit codes:
-  0  At least one process was killed
-  1  Nothing was listening on any of the requested ports
-  2  Kill failed (e.g. permission denied — try sudo)")]
+  0  The ports were freed (ports with nothing listening are ignored)
+  1  Nothing was listening, or every prompt was declined
+  2  A kill failed or was refused (permission denied, protected process)
+  3  A process was still running after --timeout, or the port was taken again"
+    )]
     Kill {
-        /// Port number(s) whose processes to kill
+        /// Port number(s) whose processes to stop
         #[arg(required = true)]
         ports: Vec<u16>,
 
-        /// Force kill (SIGKILL) without confirmation
-        #[arg(short, long)]
+        /// Signal to send (TERM, KILL, INT, HUP, QUIT, USR1, USR2 or a number)
+        #[arg(long, short = 's', value_name = "SIG", default_value = "TERM", value_parser = parse_signal)]
+        signal: Signal,
+
+        /// Shorthand for --signal KILL (still asks for confirmation; add --yes to skip it)
+        #[arg(long, short = 'f', conflicts_with = "signal")]
         force: bool,
 
-        /// Skip interactive confirmation prompt
-        #[arg(short = 'y', long)]
+        /// Don't ask for confirmation
+        #[arg(long, short = 'y')]
         yes: bool,
+
+        /// Seconds to wait for each process to exit
+        #[arg(long, value_name = "SECS", default_value = "5", value_parser = parse_timeout)]
+        timeout: Duration,
+
+        /// Send the signal and return without waiting for the process to exit
+        #[arg(long)]
+        no_wait: bool,
+
+        /// Send SIGKILL if a process is still running after --timeout
+        #[arg(long)]
+        escalate: bool,
+
+        /// Stop the listener's parent instead (e.g. nodemon or a reloader that would restart it)
+        #[arg(long)]
+        parent: bool,
+
+        /// Allow stopping protected processes (container runtimes, system services)
+        #[arg(long)]
+        allow_protected: bool,
+
+        /// Report results as JSON (schema v2); never prompts
+        #[arg(long)]
+        json: bool,
     },
 
     /// Print shell completion script for the given shell

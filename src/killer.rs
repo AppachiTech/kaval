@@ -1,8 +1,6 @@
 //! Planning and carrying out kills: protection rules, parent targeting,
 //! signals and verified exits. Shared by `kav kill` and the TUI.
 
-#![allow(dead_code)] // TODO(v0.2 Task 11c): consumed by `kav kill` and the TUI
-
 use std::fmt;
 use std::str::FromStr;
 use std::time::{Duration, Instant};

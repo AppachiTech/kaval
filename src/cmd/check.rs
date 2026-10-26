@@ -63,7 +63,7 @@ pub(crate) fn port_status(
 
 /// Without root, other users' sockets are invisible: confirm with a passive
 /// loopback connect (TCP) or a bind attempt (UDP).
-fn hidden_in_use(port: u16) -> bool {
+pub(crate) fn hidden_in_use(port: u16) -> bool {
     !is_root()
         && (probe::tcp_accepts(port, Duration::from_millis(300))
             || probe::bind_check(port, Protocol::Udp) == BindCheck::InUse)

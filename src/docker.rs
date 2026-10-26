@@ -137,7 +137,6 @@ pub fn list_mappings(timeout: Duration) -> Result<Mappings> {
 }
 
 /// Stop a container (`docker stop`), waiting at most `timeout`.
-#[allow(dead_code)] // TODO(v0.2 Task 11c): kill → docker stop
 pub fn stop(container: &ContainerInfo, timeout: Duration) -> Result<()> {
     let out = run_with_timeout(
         Command::new("docker").args(["stop", &container.id]),

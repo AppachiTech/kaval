@@ -11,14 +11,12 @@ mod services;
 mod theme;
 mod ui;
 
-use std::collections::HashSet;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io;
 use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
-use scanner::{kill_process, ContainerMode, ScanOptions, Scanner};
 
 /// True when an error chain ends in a closed pipe (e.g. `kav list | head`).
 fn is_broken_pipe(err: &anyhow::Error) -> bool {
@@ -96,73 +94,30 @@ fn run(cli: Cli) -> Result<ExitCode> {
             return cmd::check::run(&args, cli.color);
         }
 
-        Some(Command::Kill { ports, force, yes }) => {
-            let mut scanner = Scanner::new();
-            let opts = ScanOptions {
-                containers: ContainerMode::Blocking,
-                ..ScanOptions::default()
+        Some(Command::Kill {
+            ports,
+            signal,
+            force,
+            yes,
+            timeout,
+            no_wait,
+            escalate,
+            parent,
+            allow_protected,
+            json,
+        }) => {
+            let args = cmd::kill::KillArgs {
+                ports,
+                signal: if force { killer::Signal::Kill } else { signal },
+                yes,
+                timeout,
+                no_wait,
+                escalate,
+                parent,
+                allow_protected,
+                json,
             };
-            let entries = scanner.scan(&opts)?.entries;
-            let mut killed_pids: HashSet<u32> = HashSet::new();
-            let mut any_found = false;
-            let interactive = !yes && io::stdin().is_terminal();
-            for port in &ports {
-                let matches: Vec<_> = entries.iter().filter(|e| e.port == *port).collect();
-                if matches.is_empty() {
-                    println!("Nothing listening on port {}", port);
-                } else {
-                    any_found = true;
-                    for entry in &matches {
-                        let Some(pid) = entry.pid else {
-                            println!(
-                                "Port {} is held by a process kav can't see{} — try sudo",
-                                entry.port,
-                                entry
-                                    .user
-                                    .as_deref()
-                                    .map(|u| format!(" (owned by {u})"))
-                                    .unwrap_or_default()
-                            );
-                            continue;
-                        };
-                        if !killed_pids.insert(pid) {
-                            continue;
-                        }
-                        // Prompt if running in a TTY and --yes / --force not passed
-                        if interactive && !force {
-                            print!(
-                                "Kill {} (PID {}) on port {}? [y/N] ",
-                                entry.process_name, pid, entry.port
-                            );
-                            io::stdout().flush()?;
-                            let mut input = String::new();
-                            io::stdin().lock().read_line(&mut input)?;
-                            if !input.trim().eq_ignore_ascii_case("y") {
-                                println!("Skipped.");
-                                continue;
-                            }
-                        } else if !force {
-                            println!(
-                                "Killing {} (PID {}) on port {}...",
-                                entry.process_name, pid, entry.port
-                            );
-                        }
-                        if let Err(e) = kill_process(scanner.system(), pid, force) {
-                            eprintln!("Error: {e}");
-                            std::process::exit(2);
-                        }
-                        println!(
-                            "{}Killed {} (PID {})",
-                            if force { "Force " } else { "" },
-                            entry.process_name,
-                            pid
-                        );
-                    }
-                }
-            }
-            if !any_found {
-                std::process::exit(1);
-            }
+            return cmd::kill::run(&args);
         }
 
         Some(Command::Completions { shell }) => {

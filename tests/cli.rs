@@ -454,3 +454,144 @@ fn check_probe_reports_tcp_open() {
     ]));
     assert_eq!(doc["ports"][0]["probe"]["result"], "tcp_open", "{doc}");
 }
+
+fn kav_kill(args: &[&str]) -> std::process::Output {
+    let mut all = vec!["kill", "--yes"];
+    all.extend_from_slice(args);
+    kav(&all)
+}
+
+#[test]
+fn kill_stops_helper_and_frees_port() {
+    let mut helper = Helper::spawn("tcp");
+    let out = kav_kill(&[&helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout_of(&out));
+    assert!(
+        helper
+            .wait_exit(std::time::Duration::from_secs(3))
+            .is_some(),
+        "helper exited"
+    );
+    assert!(stdout_of(&out).contains("Stopped"), "{}", stdout_of(&out));
+}
+
+#[test]
+fn kill_reports_still_running_for_sigterm_ignorer() {
+    let mut helper = Helper::spawn("noterm");
+    let out = kav_kill(&["--timeout", "1", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(3), "{}", stdout_of(&out));
+    assert!(
+        helper.is_running(),
+        "SIGTERM is ignored, so the helper must still run"
+    );
+    let text = format!(
+        "{}{}",
+        stdout_of(&out),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("still running"), "{text}");
+}
+
+#[test]
+fn kill_force_stops_sigterm_ignorer() {
+    let mut helper = Helper::spawn("noterm");
+    let out = kav_kill(&["--force", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout_of(&out));
+    assert!(helper
+        .wait_exit(std::time::Duration::from_secs(3))
+        .is_some());
+}
+
+#[test]
+fn kill_escalate_stops_sigterm_ignorer() {
+    let mut helper = Helper::spawn("noterm");
+    let out = kav_kill(&["--timeout", "1", "--escalate", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout_of(&out));
+    assert!(helper
+        .wait_exit(std::time::Duration::from_secs(3))
+        .is_some());
+}
+
+#[test]
+fn kill_nothing_listening_exits_1() {
+    assert_eq!(kav_kill(&["1"]).status.code(), Some(1));
+}
+
+#[test]
+fn kill_no_wait_returns_immediately() {
+    let mut helper = Helper::spawn("noterm");
+    let start = std::time::Instant::now();
+    let out = kav_kill(&["--no-wait", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout_of(&out));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "took {:?}",
+        start.elapsed()
+    );
+    assert!(helper.is_running(), "--no-wait does not wait or escalate");
+}
+
+#[test]
+fn kill_json_v2_outcome_exited() {
+    let helper = Helper::spawn("tcp");
+    let out = kav(&["kill", "--json", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout_of(&out));
+    let doc = json_of(&out);
+    assert_eq!(doc["schema"], 2);
+    let r = &doc["results"][0];
+    assert_eq!(r["outcome"], "exited", "{doc}");
+    assert_eq!(r["pid"], helper.pid);
+    assert_eq!(r["action"], "signal");
+    assert_eq!(r["signal"], "SIGTERM");
+    assert_eq!(r["ports"], serde_json::json!([helper.port]));
+}
+
+#[test]
+fn kill_detects_respawn() {
+    let helper = Helper::spawn("supervisor");
+    let out = kav_kill(&[&helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(3), "{}", stdout_of(&out));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("taken again") && err.contains("--parent"),
+        "{err}"
+    );
+}
+
+#[test]
+fn kill_parent_stops_supervisor_and_child() {
+    let mut helper = Helper::spawn("supervisor");
+    let port = helper.port.to_string();
+    let out = kav_kill(&["--parent", &port]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout_of(&out),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        helper
+            .wait_exit(std::time::Duration::from_secs(3))
+            .is_some(),
+        "supervisor stopped"
+    );
+    assert_eq!(
+        kav(&["check", "-q", &port]).status.code(),
+        Some(1),
+        "port is free"
+    );
+}
+
+#[test]
+fn kill_parent_reports_orphaned_listener() {
+    let helper = Helper::spawn("orphaner");
+    let out = kav_kill(&["--parent", &helper.port.to_string()]);
+    assert_eq!(out.status.code(), Some(3), "{}", stdout_of(&out));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("still held"), "{err}");
+    assert!(
+        !stdout_of(&out).contains("is free"),
+        "must not claim the port is free"
+    );
+}

@@ -181,22 +181,20 @@ impl<'a> CheckDoc<'a> {
     }
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11c)
 /// One process or container acted on by `kav kill --json`.
 #[derive(Serialize)]
 pub struct KillResultJson {
     pub ports: Vec<u16>,
     pub pid: Option<u32>,
-    pub process: String,
+    pub process: Option<String>,
     /// `signal`, `docker_stop` or `none`.
     pub action: &'static str,
     pub signal: Option<String>,
-    /// `exited`, `signal_sent`, `stopped`, `still_running`, `failed`, `refused`, `declined` or `not_found`.
+    /// `exited`, `signal_sent`, `stopped`, `still_running`, `respawned`, `failed`, `refused`, `declined` or `not_found`.
     pub outcome: &'static str,
     pub message: Option<String>,
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11c)
 #[derive(Serialize)]
 pub struct KillDoc {
     pub schema: u32,
@@ -204,7 +202,6 @@ pub struct KillDoc {
     pub results: Vec<KillResultJson>,
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11c)
 impl KillDoc {
     pub fn new(results: Vec<KillResultJson>) -> Self {
         Self {
