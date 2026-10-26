@@ -1,4 +1,5 @@
 mod cli;
+mod docker;
 mod models;
 mod output;
 mod project;
@@ -14,7 +15,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
 use models::{filter_entries, sort_entries, SortField};
-use scanner::{kill_process, ScanOptions, Scanner};
+use scanner::{kill_process, ContainerMode, ScanOptions, Scanner};
 
 /// Refresh `kav list` output in-place on the same screen.
 /// Clears the terminal and redraws every 2 seconds until Ctrl+C (SIGINT) terminates the process.
@@ -32,7 +33,7 @@ fn run_watch(
         tcp: show_tcp,
         udp: show_udp,
         sample_cpu: true,
-        ..ScanOptions::default()
+        containers: ContainerMode::Blocking,
     };
 
     loop {
@@ -88,7 +89,7 @@ fn main() -> Result<()> {
                 tcp: show_tcp,
                 udp: show_udp,
                 sample_cpu: true,
-                ..ScanOptions::default()
+                containers: ContainerMode::Blocking,
             };
             let mut entries = Scanner::new().scan(&opts)?.entries;
             sort_entries(&mut entries, sort.unwrap_or(SortField::Port), false);
@@ -105,6 +106,7 @@ fn main() -> Result<()> {
         Some(Command::Check { ports }) => {
             let opts = ScanOptions {
                 sample_cpu: true,
+                containers: ContainerMode::Blocking,
                 ..ScanOptions::default()
             };
             let entries = Scanner::new().scan(&opts)?.entries;
@@ -131,7 +133,11 @@ fn main() -> Result<()> {
 
         Some(Command::Kill { ports, force, yes }) => {
             let mut scanner = Scanner::new();
-            let entries = scanner.scan(&ScanOptions::default())?.entries;
+            let opts = ScanOptions {
+                containers: ContainerMode::Blocking,
+                ..ScanOptions::default()
+            };
+            let entries = scanner.scan(&opts)?.entries;
             let mut killed_pids: HashSet<u32> = HashSet::new();
             let mut any_found = false;
             let interactive = !yes && io::stdin().is_terminal();

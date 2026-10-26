@@ -22,7 +22,7 @@ use crate::models::{
     count_browser_groups, matches_filter, sort_entries, PortEntry, SortField, CPU_ERROR_THRESHOLD,
     CPU_WARN_THRESHOLD,
 };
-use crate::scanner::{kill_process, ScanOptions, Scanner};
+use crate::scanner::{kill_process, ContainerMode, ScanOptions, Scanner};
 use crate::theme::theme;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -89,7 +89,7 @@ impl App {
             tcp: self.show_tcp,
             udp: self.show_udp,
             sample_cpu: !self.primed,
-            ..ScanOptions::default()
+            containers: ContainerMode::Background,
         };
         match self.scanner.scan(&opts) {
             Ok(snapshot) => {

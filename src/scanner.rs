@@ -6,11 +6,12 @@ use anyhow::Result;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users};
 
+use crate::docker::{ContainerResolver, Mappings};
 use crate::models::{
     Client, PortEntry, ProcessRef, Protocol, Service, ServiceCategory, ServiceSource,
 };
 use crate::project::ProjectCache;
-use crate::services::identify;
+use crate::services::{identify, is_container_proxy};
 
 /// What every listener refresh collects. `refresh_processes()` alone skips the
 /// command line, cwd and user, so request them explicitly (fetched once per process).
@@ -29,10 +30,8 @@ pub enum ContainerMode {
     /// Never ask a container runtime.
     #[default]
     Off,
-    #[allow(dead_code)] // TODO(v0.2 Task 7)
     /// Ask and wait (one-shot commands).
     Blocking,
-    #[allow(dead_code)] // TODO(v0.2 Task 7)
     /// Ask in the background and use the latest answer (TUI).
     Background,
 }
@@ -44,7 +43,6 @@ pub struct ScanOptions {
     pub udp: bool,
     /// Sample CPU over `MINIMUM_CPU_UPDATE_INTERVAL` before measuring (one-shot commands).
     pub sample_cpu: bool,
-    #[allow(dead_code)] // TODO(v0.2 Task 7): container attribution
     pub containers: ContainerMode,
 }
 
@@ -225,6 +223,25 @@ pub(crate) fn inherit_parent_services(entries: &mut [PortEntry]) {
     }
 }
 
+/// Name container-proxy rows after the container that publishes their port.
+pub(crate) fn attribute_containers(entries: &mut [PortEntry], mappings: &Mappings) {
+    for e in entries.iter_mut() {
+        if !is_container_proxy(&e.process_name, &e.process_cmd) {
+            continue;
+        }
+        if let Some(container) = mappings.get(&(e.protocol, e.port)) {
+            e.service = Some(Service {
+                name: container.name.clone(),
+                category: ServiceCategory::Container,
+                source: ServiceSource::Container,
+                note: e.service.as_ref().and_then(|s| s.note),
+            });
+            e.category = ServiceCategory::Container;
+            e.container = Some(container.clone());
+        }
+    }
+}
+
 /// True when kav runs with root privileges (sees every socket owner).
 pub fn is_root() -> bool {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -307,6 +324,7 @@ pub struct Scanner {
     sys: System,
     users: Users,
     projects: ProjectCache,
+    containers: ContainerResolver,
 }
 
 impl Scanner {
@@ -315,6 +333,7 @@ impl Scanner {
             sys: System::new(),
             users: Users::new_with_refreshed_list(),
             projects: ProjectCache::from_env(),
+            containers: ContainerResolver::new(Duration::from_secs(5)),
         }
     }
 
@@ -369,6 +388,18 @@ impl Scanner {
         inherit_parent_services(&mut entries);
         for e in &mut entries {
             e.project = e.cwd.as_deref().and_then(|cwd| self.projects.resolve(cwd));
+        }
+        let has_proxy = entries
+            .iter()
+            .any(|e| is_container_proxy(&e.process_name, &e.process_cmd));
+        let mappings = match opts.containers {
+            _ if !has_proxy => None,
+            ContainerMode::Off => None,
+            ContainerMode::Blocking => self.containers.get_blocking(),
+            ContainerMode::Background => self.containers.get_background(),
+        };
+        if let Some(mappings) = mappings {
+            attribute_containers(&mut entries, mappings);
         }
         let visibility = visibility_for(&entries, is_root());
         Ok(Snapshot {
@@ -657,6 +688,38 @@ mod tests {
         inherit_parent_services(&mut v);
         assert_eq!(v[1].service_name(), Some("Uvicorn"));
         assert_eq!(v[2].service_name(), None, "only same-port parents count");
+    }
+
+    #[test]
+    fn container_proxies_are_attributed() {
+        use crate::models::testutil::entry;
+        use crate::models::{ContainerInfo, ServiceSource};
+        let qdrant = ContainerInfo {
+            id: "517d48f91bc3".into(),
+            name: "roo-qdrant".into(),
+            image: "qdrant/qdrant".into(),
+            compose_project: None,
+        };
+        let mut mappings = crate::docker::Mappings::new();
+        mappings.insert((Protocol::Tcp, 6333), qdrant.clone());
+        let mut v = vec![
+            entry(6333, 21743, "com.docker.backend"),
+            entry(6334, 21743, "com.docker.backend"),
+            entry(6333, 999, "node"),
+        ];
+        attribute_containers(&mut v, &mappings);
+        assert_eq!(v[0].container.as_ref(), Some(&qdrant));
+        assert_eq!(v[0].service_name(), Some("roo-qdrant"));
+        assert_eq!(
+            v[0].service.as_ref().unwrap().source,
+            ServiceSource::Container
+        );
+        assert_eq!(v[0].category, ServiceCategory::Container);
+        assert_eq!(v[1].container, None, "unmapped port stays unattributed");
+        assert_eq!(
+            v[2].container, None,
+            "only container proxies are attributed"
+        );
     }
 
     #[test]

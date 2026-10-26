@@ -43,7 +43,6 @@ pub enum ServiceSource {
     Process,
     Command,
     Port,
-    #[allow(dead_code)] // TODO(v0.2 Task 7): container attribution
     Container,
 }
 
