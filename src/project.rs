@@ -25,11 +25,6 @@ impl ProjectCache {
         Self::new(std::env::var_os("HOME").map(PathBuf::from))
     }
 
-    #[allow(dead_code)] // TODO(v0.2 Task 11b): check details / TUI detail pane
-    pub fn home(&self) -> Option<&Path> {
-        self.home.as_deref()
-    }
-
     /// Project name for a working directory inside the home directory: the
     /// nearest ancestor holding `.git` (at most [`MAX_DEPTH`] levels up, never
     /// above home), otherwise the directory's own name. `None` for directories
@@ -62,7 +57,6 @@ impl ProjectCache {
 }
 
 /// A path with the home directory shown as `~`.
-#[allow(dead_code)] // TODO(v0.2 Task 11b): check details / TUI detail pane
 pub fn display_path(path: &Path, home: Option<&Path>) -> String {
     match home.and_then(|h| path.strip_prefix(h).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),

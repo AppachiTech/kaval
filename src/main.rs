@@ -33,7 +33,7 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
 
 fn main() -> ExitCode {
     match run(Cli::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) if is_broken_pipe(&e) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("kav: error: {e:#}");
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         None => {
             // Default: launch TUI
@@ -79,32 +79,21 @@ fn run(cli: Cli) -> Result<()> {
             cmd::list::run(&args, cli.color)?;
         }
 
-        Some(Command::Check { ports }) => {
-            let opts = ScanOptions {
-                sample_cpu: true,
-                containers: ContainerMode::Blocking,
-                ..ScanOptions::default()
+        Some(Command::Check {
+            ports,
+            json,
+            free,
+            quiet,
+            probe,
+        }) => {
+            let args = cmd::check::CheckArgs {
+                ports,
+                json,
+                free,
+                quiet,
+                probe,
             };
-            let entries = Scanner::new().scan(&opts)?.entries;
-            let color = io::stdout().is_terminal();
-            let matches: Vec<_> = entries.iter().filter(|e| ports.contains(&e.port)).collect();
-            let missing: Vec<_> = ports
-                .iter()
-                .filter(|p| !entries.iter().any(|e| e.port == **p))
-                .collect();
-            if !matches.is_empty() {
-                output::print_check_table(&matches, color);
-            }
-            for port in &missing {
-                println!("Nothing listening on port {}", port);
-            }
-            if ports.len() > 1 {
-                let active = ports.len() - missing.len();
-                println!("\n{} of {} ports active", active, ports.len());
-            }
-            if matches.is_empty() {
-                std::process::exit(1);
-            }
+            return cmd::check::run(&args, cli.color);
         }
 
         Some(Command::Kill { ports, force, yes }) => {
@@ -185,5 +174,5 @@ fn run(cli: Cli) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

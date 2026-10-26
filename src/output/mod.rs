@@ -8,8 +8,6 @@ use std::io::IsTerminal;
 
 use clap::ValueEnum;
 
-pub use table::print_check_table;
-
 /// When to colour output (`--color`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum ColorChoice {

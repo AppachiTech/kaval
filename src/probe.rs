@@ -1,6 +1,5 @@
 //! Port probes: does something accept connections, can a server bind the port,
 //! and a lightweight health check. Everything stays on this machine.
-#![allow(dead_code)] // TODO(v0.2 Task 11b): consumed by check / wait / pick
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
@@ -69,7 +68,6 @@ pub enum HealthResult {
     Refused,
     Timeout,
     /// Probing is not possible (e.g. UDP).
-    #[allow(dead_code)] // TODO(v0.2 Task 11b): reported for UDP ports
     Unsupported,
 }
 

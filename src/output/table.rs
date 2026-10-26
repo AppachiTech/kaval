@@ -358,23 +358,92 @@ pub fn print_list(
     write_hint(w, visibility, &a)
 }
 
-/// Print rows for `kav check`, each followed by its command line.
-pub fn print_check_table(entries: &[&PortEntry], color: bool) {
-    let a = Ansi(color);
-    let layout = Layout::for_width(None);
-    let mut out = io::stdout().lock();
-    let _ = write_header(&mut out, &layout, &a);
-    for e in entries {
-        let _ = write_row(&mut out, e, 1, &layout, &a, false);
-        if !e.process_cmd.is_empty() {
-            let _ = writeln!(
-                out,
-                "{}    cmd: {}{}",
-                a.fg(theme().ct(theme().text_muted)),
-                truncate(&sanitize(&e.cmd_display()), 120),
-                a.reset()
-            );
+/// Rows for `kav check`, each followed by labelled detail lines.
+pub struct CheckTable<'a> {
+    ansi: Ansi,
+    layout: Layout,
+    home: Option<&'a std::path::Path>,
+    header_done: bool,
+}
+
+impl<'a> CheckTable<'a> {
+    pub fn new(color: bool, home: Option<&'a std::path::Path>) -> Self {
+        Self {
+            ansi: Ansi(color),
+            layout: Layout::for_width(None),
+            home,
+            header_done: false,
         }
+    }
+
+    /// Write one listener (the header first, once) and its details.
+    pub fn entry(
+        &mut self,
+        w: &mut impl Write,
+        e: &PortEntry,
+        probe: Option<&str>,
+    ) -> io::Result<()> {
+        if !self.header_done {
+            write_header(w, &self.layout, &self.ansi)?;
+            self.header_done = true;
+        }
+        write_row(w, e, 1, &self.layout, &self.ansi, false)?;
+        let mut details: Vec<(&str, String)> = Vec::new();
+        if !e.process_cmd.is_empty() {
+            details.push(("cmd", truncate(&sanitize(&e.cmd_display()), 120)));
+        }
+        if let Some(cwd) = &e.cwd {
+            details.push((
+                "dir",
+                sanitize(&crate::project::display_path(cwd, self.home)).into_owned(),
+            ));
+        }
+        if let Some(c) = &e.container {
+            let compose = c
+                .compose_project
+                .as_deref()
+                .map(|p| format!(", compose project {p}"))
+                .unwrap_or_default();
+            details.push((
+                "container",
+                sanitize(&format!("{} ({}{compose})", c.name, c.image)).into_owned(),
+            ));
+        }
+        if let Some(p) = &e.parent {
+            details.push(("parent", format!("{} (PID {})", sanitize(&p.name), p.pid)));
+        }
+        if e.protocol == Protocol::Tcp && !e.clients.is_empty() {
+            let names: Vec<String> = e
+                .clients
+                .iter()
+                .take(5)
+                .map(|c| match (&c.process, c.pid) {
+                    (Some(name), Some(pid)) => format!("{} (PID {pid})", sanitize(name)),
+                    _ => c.addr.to_string(),
+                })
+                .collect();
+            details.push((
+                "clients",
+                format!("{} — {}", e.clients.len(), names.join(", ")),
+            ));
+        }
+        if let Some(note) = e.service.as_ref().and_then(|s| s.note) {
+            details.push(("note", note.to_string()));
+        }
+        if let Some(probe) = probe {
+            details.push(("probe", probe.to_string()));
+        }
+        let t = theme();
+        for (label, value) in details {
+            writeln!(
+                w,
+                "{}    {:<11}{value}{}",
+                self.ansi.fg(t.ct(t.text_muted)),
+                format!("{label}:"),
+                self.ansi.reset()
+            )?;
+        }
+        Ok(())
     }
 }
 

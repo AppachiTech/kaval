@@ -86,20 +86,36 @@ Exit codes:
     },
 
     /// Check what's running on specific port(s)
-    ///
-    /// Exits 0 if at least one port is active, 1 if none are active.
     #[command(long_about = "Check what's running on specific port(s).
 
-Prints a table of matching ports. When checking multiple ports, prints a summary
-line ('N of M ports active').
+Shows each listener with its command line, directory, parent and connections. Without
+root, ports held by other users' processes are still detected (via a loopback connect)
+and reported as in use.
 
 Exit codes:
-  0  At least one requested port is active
-  1  No requested ports are active (useful for scripting)")]
+  0  At least one port is in use (with --free: every port is free)
+  1  No port is in use (with --free: at least one port is busy)
+  2  Error")]
     Check {
         /// Port number(s) to check
         #[arg(required = true)]
         ports: Vec<u16>,
+
+        /// Output as JSON (schema v2)
+        #[arg(long)]
+        json: bool,
+
+        /// Succeed only if every port is free (a pre-flight check before starting servers)
+        #[arg(long)]
+        free: bool,
+
+        /// Print nothing; report only through the exit code
+        #[arg(long, short = 'q')]
+        quiet: bool,
+
+        /// Probe busy ports on this machine (TCP connect; HTTP HEAD for web ports)
+        #[arg(long)]
+        probe: bool,
     },
 
     /// Kill the process(es) listening on port(s)

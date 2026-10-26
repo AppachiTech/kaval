@@ -389,3 +389,68 @@ fn watch_json_emits_ndjson() {
         assert!(v["ports"].is_array());
     }
 }
+
+#[test]
+fn check_free_exit_codes() {
+    let helper = Helper::spawn("tcp");
+    assert_eq!(kav(&["check", "--free", "1"]).status.code(), Some(0));
+    assert_eq!(
+        kav(&["check", "--free", &helper.port.to_string()])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn check_quiet_prints_nothing() {
+    let helper = Helper::spawn("tcp");
+    let busy = kav(&["check", "-q", &helper.port.to_string()]);
+    assert_eq!(busy.status.code(), Some(0));
+    assert!(busy.stdout.is_empty(), "{}", stdout_of(&busy));
+    let free = kav(&["check", "--quiet", "1"]);
+    assert_eq!(free.status.code(), Some(1));
+    assert!(free.stdout.is_empty());
+}
+
+#[test]
+fn check_json_v2() {
+    let helper = Helper::spawn("tcp");
+    let out = kav(&["check", "--json", &helper.port.to_string(), "1"]);
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json_of(&out);
+    assert_eq!(doc["schema"], 2);
+    let busy = &doc["ports"][0];
+    assert_eq!(busy["port"], helper.port);
+    assert_eq!(busy["in_use"], true);
+    assert_eq!(busy["owner_visible"], true);
+    assert_eq!(busy["listeners"][0]["pid"], helper.pid);
+    assert!(busy["probe"].is_null());
+    let free = &doc["ports"][1];
+    assert_eq!(free["in_use"], false);
+    assert_eq!(free["listeners"], serde_json::json!([]));
+}
+
+#[test]
+fn check_dedupes_ports() {
+    let helper = Helper::spawn("tcp");
+    let p = helper.port.to_string();
+    let out = kav(&["check", &p, &p, "1"]);
+    assert!(
+        stdout_of(&out).contains("1 of 2 ports active"),
+        "{}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+fn check_probe_reports_tcp_open() {
+    let helper = Helper::spawn("tcp");
+    let doc = json_of(&kav(&[
+        "check",
+        "--probe",
+        "--json",
+        &helper.port.to_string(),
+    ]));
+    assert_eq!(doc["ports"][0]["probe"]["result"], "tcp_open", "{doc}");
+}

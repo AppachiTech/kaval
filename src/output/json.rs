@@ -144,7 +144,6 @@ pub fn list_doc(
     }
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11b)
 /// A health probe result in `kav check --probe --json`.
 #[derive(Serialize)]
 pub struct ProbeJson {
@@ -154,7 +153,6 @@ pub struct ProbeJson {
     pub latency_ms: u64,
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11b)
 /// One requested port in `kav check --json`.
 #[derive(Serialize)]
 pub struct CheckPortJson<'a> {
@@ -166,7 +164,6 @@ pub struct CheckPortJson<'a> {
     pub probe: Option<ProbeJson>,
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11b)
 #[derive(Serialize)]
 pub struct CheckDoc<'a> {
     pub schema: u32,
@@ -174,7 +171,6 @@ pub struct CheckDoc<'a> {
     pub ports: Vec<CheckPortJson<'a>>,
 }
 
-#[allow(dead_code)] // TODO(v0.2 Task 11b)
 impl<'a> CheckDoc<'a> {
     pub fn new(ports: Vec<CheckPortJson<'a>>) -> Self {
         Self {

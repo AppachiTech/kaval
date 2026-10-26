@@ -436,7 +436,6 @@ pub fn is_https_port(port: u16) -> bool {
 }
 
 /// Whether a listener probably speaks HTTP (so "open in browser" makes sense).
-#[allow(dead_code)] // TODO(v0.2 Task 11b): probes / TUI open
 pub fn is_http_like(port: u16, service: Option<&Service>) -> bool {
     WEB_PORTS.contains(&port) || service.is_some_and(|s| s.category == C::DevServer)
 }
