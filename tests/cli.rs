@@ -765,3 +765,26 @@ fn no_truecolor_falls_back_to_256_colours() {
         "no 24-bit escapes for Apple Terminal"
     );
 }
+
+#[test]
+fn concurrent_checks_do_not_see_each_other() {
+    // Probes must be passive: if `check` bound the port to test it, concurrent
+    // runs would briefly see each other's probe socket and report "in use".
+    let children: Vec<_> = (0..30)
+        .map(|_| {
+            Command::new(env!("CARGO_BIN_EXE_kav"))
+                .args(["check", "-q", "1"])
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let codes: Vec<Option<i32>> = children
+        .into_iter()
+        .map(|mut c| c.wait().unwrap().code())
+        .collect();
+    assert!(
+        codes.iter().all(|c| *c == Some(1)),
+        "every run must see port 1 as free: {codes:?}"
+    );
+}

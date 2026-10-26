@@ -11,7 +11,7 @@ use anyhow::Result;
 
 use crate::models::{PortEntry, Protocol};
 use crate::output::{self, json, table, ColorChoice};
-use crate::probe::{self, BindCheck, Health, HealthResult};
+use crate::probe::{self, Health, HealthResult};
 use crate::scanner::{is_root, ContainerMode, ScanOptions, Scanner};
 use crate::services::is_http_like;
 
@@ -61,12 +61,11 @@ pub(crate) fn port_status(
     }
 }
 
-/// Without root, other users' sockets are invisible: confirm with a passive
-/// loopback connect (TCP) or a bind attempt (UDP).
+/// Without root, other users' sockets are invisible: confirm with a loopback
+/// TCP connect. Deliberately passive — binding the port to test it would make
+/// concurrent kav runs (and starting servers) see each other's probe socket.
 pub(crate) fn hidden_in_use(port: u16) -> bool {
-    !is_root()
-        && (probe::tcp_accepts(port, Duration::from_millis(300))
-            || probe::bind_check(port, Protocol::Udp) == BindCheck::InUse)
+    !is_root() && probe::tcp_accepts(port, Duration::from_millis(300))
 }
 
 fn run_probe(status: &PortStatus<'_>) -> Option<Health> {
