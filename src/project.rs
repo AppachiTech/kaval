@@ -33,7 +33,7 @@ impl ProjectCache {
     /// Project name for a working directory inside the home directory: the
     /// nearest ancestor holding `.git` (at most [`MAX_DEPTH`] levels up, never
     /// above home), otherwise the directory's own name. `None` for directories
-    /// outside home (system daemons, `/`) and for home itself.
+    /// outside home (system daemons, `/`), home itself, `~/Library` and dot-directories.
     pub fn resolve(&mut self, cwd: &Path) -> Option<String> {
         if let Some(hit) = self.cache.get(cwd) {
             return hit.clone();
@@ -45,7 +45,10 @@ impl ProjectCache {
 
     fn compute(&self, cwd: &Path) -> Option<String> {
         let home = self.home.as_deref()?;
-        if cwd == home || !cwd.starts_with(home) {
+        let first = cwd.strip_prefix(home).ok()?.components().next()?;
+        // App data (~/Library on macOS) and tool dirs (~/.vscode, ~/.local) are not projects.
+        let first = first.as_os_str().to_string_lossy();
+        if first == "Library" || first.starts_with('.') {
             return None;
         }
         let root = cwd
@@ -136,6 +139,19 @@ mod tests {
             Some("app"),
             "cached answer reused"
         );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn app_support_and_dot_dirs_are_not_projects() {
+        let home = temp_home("appsupport");
+        let docker = home.join("Library/Containers/com.docker.docker/Data");
+        let vscode = home.join(".vscode-insiders/extensions/x");
+        fs::create_dir_all(&docker).unwrap();
+        fs::create_dir_all(&vscode).unwrap();
+        let mut cache = ProjectCache::new(Some(home.clone()));
+        assert_eq!(cache.resolve(&docker), None);
+        assert_eq!(cache.resolve(&vscode), None);
         fs::remove_dir_all(home).unwrap();
     }
 
