@@ -469,8 +469,7 @@ mod tests {
         // Last object line must not end with ","
         let last_obj_line = json
             .lines()
-            .filter(|l| l.trim_start().starts_with('{'))
-            .last()
+            .rfind(|l| l.trim_start().starts_with('{'))
             .unwrap();
         assert!(
             !last_obj_line.trim_end().ends_with(','),
