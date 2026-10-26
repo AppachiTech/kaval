@@ -1,5 +1,7 @@
 # Kaval Demo — Guard your ports.
-# Shows: list, sort, check, JSON, TUI navigation, detail pane, filter, sort cycle
+# Shows: list, exposed listeners, check with a probe, JSON, pick; then the TUI:
+# navigation, detail pane, exposure view, filter, sort, copy menu, help.
+# Record on a machine with a few dev servers running: vhs demo/demo.tape
 
 Output demo/demo.gif
 
@@ -19,47 +21,53 @@ Set TypingSpeed 30ms
 Set WindowBar Colorful
 Set BorderRadius 8
 
-# --- CLI: list all ports ---
+# --- CLI: every listening port, with bind address and project ---
 Type "kav list"
 Sleep 200ms
 Enter
 Sleep 3s
 
-# --- CLI: sort by CPU ---
-Type "kav list --sort cpu"
+# --- CLI: only what other machines can reach ---
+Type "kav list --exposed"
 Sleep 200ms
 Enter
 Sleep 3s
 
-# --- CLI: check specific ports ---
-Type "kav check 443 5432 3000"
+# --- CLI: what's on these ports, and does it answer? ---
+Type "kav check 5432 3000 --probe"
 Sleep 200ms
 Enter
 Sleep 3s
 
-# --- CLI: JSON output ---
-Type "kav list --json | head -10"
+# --- CLI: JSON (schema 2) ---
+Type "kav list --json | head -20"
 Sleep 200ms
 Enter
 Sleep 3s
 
-# --- Launch TUI ---
-Type "kav"
+# --- CLI: a free port for a new server ---
+Type "kav pick"
 Sleep 200ms
 Enter
 Sleep 2s
 
-# --- Navigate down ---
-Down 4
-Sleep 500ms
+# --- Launch the TUI (the detail pane is open on wide terminals) ---
+Type "kav"
+Sleep 200ms
+Enter
+Sleep 2.5s
 
-# --- Open detail pane ---
-Ctrl+D
-Sleep 1.5s
-
-# --- Browse with detail pane open ---
+# --- Navigate; the detail pane follows the selection ---
 Down 3
-Sleep 500ms
+Sleep 1s
+Down 2
+Sleep 1s
+
+# --- Only listeners exposed to the network, then everything again ---
+Type "e"
+Sleep 1.5s
+Type "e"
+Sleep 800ms
 
 # --- Filter ---
 Type "/"
@@ -67,20 +75,30 @@ Sleep 300ms
 Type "postgres"
 Sleep 1.5s
 
-# --- Clear filter ---
+# --- Esc clears the filter ---
 Escape
 Sleep 800ms
 
-# --- Cycle sort (Port → Name → CPU) ---
-Ctrl+S
+# --- Sort: Port → Name → CPU, then reverse ---
+Type "s"
 Sleep 800ms
-Ctrl+S
+Type "s"
+Sleep 800ms
+Type "S"
 Sleep 800ms
 
-# --- Close detail pane ---
-Ctrl+D
-Sleep 800ms
+# --- Copy menu (Esc closes it) ---
+Type "y"
+Sleep 1.2s
+Escape
+Sleep 500ms
+
+# --- Help ---
+Type "?"
+Sleep 2s
+Type "?"
+Sleep 500ms
 
 # --- Quit ---
-Ctrl+Q
+Type "q"
 Sleep 500ms

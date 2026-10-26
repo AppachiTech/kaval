@@ -15,7 +15,9 @@ use crate::theme::ThemeChoice;
     name = "kav",
     about = "Kaval — Guard your ports. A developer-focused port and process manager TUI.",
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("BUILD_DATE"), ")"),
-    long_about = None
+    long_about = None,
+    after_help = "Run without a command for the interactive view. \
+                  See `kav <command> --help` for each command's options and exit codes."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -177,8 +179,9 @@ Exit codes:
 
 Sends SIGTERM and waits (up to --timeout) until each process has exited, so \"Stopped\"
 means the port is really free. Ports published by a Docker container are freed with
-`docker stop`; container runtimes, init and system services are never killed unless
---allow-protected is given. Asks for confirmation in a terminal unless --yes.
+`docker stop`; container runtimes and system services are never killed unless
+--allow-protected is given, and init and kav itself never are. Asks for confirmation
+in a terminal unless --yes.
 
 Exit codes:
   0  The ports were freed (ports with nothing listening are ignored)
@@ -289,7 +292,10 @@ Exit codes:
 
     /// Print shell completion script for the given shell
     ///
-    /// Pipe the output to your shell's completion directory.
+    /// Save the output in your shell's completion directory, e.g.
+    ///
+    ///   kav completions fish > ~/.config/fish/completions/kav.fish
+    ///
     /// Exits 0 always.
     Completions {
         /// Shell to generate completions for
@@ -299,7 +305,10 @@ Exit codes:
 
     /// Print a man page for kav to stdout
     ///
-    /// Pipe to a file or directly to man: kav man | man -l -
+    /// Save it and read it with man (works on macOS and Linux):
+    ///
+    ///   kav man > kav.1 && man ./kav.1
+    ///
     /// Exits 0 always.
     Man,
 }
