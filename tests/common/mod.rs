@@ -28,7 +28,16 @@ impl Helper {
     /// `supervisor` (keeps a child listener alive on one port, restarting it when it
     /// exits; on SIGTERM it stops the child and exits, like nodemon or pm2).
     pub fn spawn(mode: &str) -> Helper {
-        let mut child = helper_command(mode)
+        Self::spawn_with(mode, &[])
+    }
+
+    /// Spawn a helper with extra environment (e.g. `fixed` + `KAV_HELPER_PORT`).
+    pub fn spawn_with(mode: &str, env: &[(&str, String)]) -> Helper {
+        let mut cmd = helper_command(mode);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()

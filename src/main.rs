@@ -120,6 +120,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
             return cmd::kill::run(&args);
         }
 
+        Some(Command::Wait {
+            ports,
+            free,
+            timeout,
+            udp,
+            quiet,
+        }) => {
+            let args = cmd::wait::WaitArgs {
+                ports,
+                free,
+                timeout,
+                udp,
+                quiet,
+            };
+            return cmd::wait::run(&args);
+        }
+
+        Some(Command::Pick { range, count, udp }) => {
+            return cmd::pick::run(&cmd::pick::PickArgs { range, count, udp });
+        }
+
         Some(Command::Completions { shell }) => {
             cli::print_completions(shell);
         }

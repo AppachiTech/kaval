@@ -595,3 +595,97 @@ fn kill_parent_reports_orphaned_listener() {
         "must not claim the port is free"
     );
 }
+
+/// A free TCP port from `range`, found by kav itself (in its own process).
+fn free_port(range: &str) -> u16 {
+    let out = kav(&["pick", "--range", range]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "pick failed: {}",
+        stdout_of(&out)
+    );
+    stdout_of(&out).trim().parse().expect("pick prints a port")
+}
+
+/// Wait up to `secs` for a child to exit and return its exit code.
+fn exit_code_within(child: &mut std::process::Child, secs: u64) -> Option<i32> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while std::time::Instant::now() < deadline {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    None
+}
+
+#[test]
+fn wait_succeeds_when_listener_appears() {
+    let port = free_port("41000-41999");
+    let mut waiter = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["wait", &port.to_string(), "--timeout", "15"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(waiter.try_wait().unwrap().is_none(), "nothing listens yet");
+    let _helper = Helper::spawn_with("fixed", &[("KAV_HELPER_PORT", port.to_string())]);
+    assert_eq!(exit_code_within(&mut waiter, 10), Some(0));
+}
+
+#[test]
+fn wait_free_succeeds_when_listener_exits() {
+    let helper = Helper::spawn("tcp");
+    let mut waiter = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args([
+            "wait",
+            "--free",
+            &helper.port.to_string(),
+            "--timeout",
+            "15",
+        ])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(waiter.try_wait().unwrap().is_none(), "port is still busy");
+    drop(helper);
+    assert_eq!(exit_code_within(&mut waiter, 10), Some(0));
+}
+
+#[test]
+fn wait_times_out_with_exit_1() {
+    let port = free_port("42000-42999");
+    let start = std::time::Instant::now();
+    let out = kav(&["wait", &port.to_string(), "--timeout", "1"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(start.elapsed() >= std::time::Duration::from_secs(1));
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn pick_returns_bindable_port() {
+    let port = free_port("43000-43999");
+    assert!((43000..=43999).contains(&port));
+    std::net::TcpListener::bind(("127.0.0.1", port)).expect("picked port is bindable");
+}
+
+#[test]
+fn pick_count_returns_distinct_ports() {
+    let out = kav(&["pick", "--range", "44000-44999", "--count", "3"]);
+    assert_eq!(out.status.code(), Some(0));
+    let ports: std::collections::HashSet<u16> = stdout_of(&out)
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert_eq!(ports.len(), 3);
+}
+
+#[test]
+fn pick_skips_busy_port() {
+    let helper = Helper::spawn("tcp");
+    let range = format!("{0}-{0}", helper.port);
+    assert_eq!(kav(&["pick", "--range", &range]).status.code(), Some(1));
+}

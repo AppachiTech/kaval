@@ -317,6 +317,15 @@ fn collect_sockets(tcp: bool, udp: bool) -> Result<Vec<RawSocket>> {
         .collect())
 }
 
+/// Listening `(protocol, port)` pairs only — no process details, so it is cheap
+/// enough to poll (used by `kav wait` and `kav pick`).
+pub fn listening_ports(tcp: bool, udp: bool) -> Result<HashSet<(Protocol, u16)>> {
+    Ok(group_sockets(&collect_sockets(tcp, udp)?)
+        .into_iter()
+        .map(|g| (g.protocol, g.port))
+        .collect())
+}
+
 /// Scans listening sockets and maps them to process details.
 ///
 /// Keep one `Scanner` alive across refreshes (TUI, watch mode): CPU usage is

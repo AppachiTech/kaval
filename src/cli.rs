@@ -40,6 +40,30 @@ fn parse_timeout(s: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs_f64(secs))
 }
 
+/// An inclusive port range for `kav pick`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortRange {
+    pub start: u16,
+    pub end: u16,
+}
+
+/// Parse `3000-3999` (or a single port) into a range.
+fn parse_range(s: &str) -> Result<PortRange, String> {
+    let (start, end) = s.split_once('-').unwrap_or((s, s));
+    let port = |p: &str| {
+        p.trim()
+            .parse::<u16>()
+            .map_err(|_| format!("'{p}' is not a port number (1-65535)"))
+    };
+    let (start, end) = (port(start)?, port(end)?);
+    if start == 0 || start > end {
+        return Err(format!(
+            "invalid range '{s}' (use START-END with 1 <= START <= END)"
+        ));
+    }
+    Ok(PortRange { start, end })
+}
+
 /// Parse a refresh interval in seconds (fractions allowed, at least 0.1).
 pub fn parse_interval(s: &str) -> Result<Duration, String> {
     let secs: f64 = s
@@ -189,6 +213,65 @@ Exit codes:
         /// Report results as JSON (schema v2); never prompts
         #[arg(long)]
         json: bool,
+    },
+
+    /// Wait until port(s) are listening, or free with --free (for scripts and CI)
+    #[command(
+        long_about = "Wait until every given port is listening (or, with --free, until every port is free).
+
+Polls every 250 ms without binding the ports, so it never races a server that is
+starting up. Handy before running tests against a dev server, or after `kav kill`.
+
+Exit codes:
+  0  The condition was met
+  1  Timed out
+  2  Error"
+    )]
+    Wait {
+        /// Port number(s) to wait for
+        #[arg(required = true)]
+        ports: Vec<u16>,
+
+        /// Wait until the ports are free instead
+        #[arg(long)]
+        free: bool,
+
+        /// Give up after this many seconds (0 waits forever)
+        #[arg(long, value_name = "SECS", default_value = "30", value_parser = parse_timeout)]
+        timeout: Duration,
+
+        /// Wait for UDP ports instead of TCP
+        #[arg(long)]
+        udp: bool,
+
+        /// Print nothing; report only through the exit code
+        #[arg(long, short = 'q')]
+        quiet: bool,
+    },
+
+    /// Print free port(s) you can bind to
+    #[command(
+        long_about = "Print free port(s) in a range, one per line, for scripts:
+
+  PORT=$(kav pick --range 3000-3999) npm run dev
+
+Exit codes:
+  0  Enough free ports were found
+  1  Not enough free ports in the range
+  2  Error"
+    )]
+    Pick {
+        /// Range to search, e.g. 3000-3999 (or a single port)
+        #[arg(long, value_name = "START-END", default_value = "3000-9999", value_parser = parse_range)]
+        range: PortRange,
+
+        /// How many ports to print
+        #[arg(long, short = 'n', default_value_t = 1)]
+        count: usize,
+
+        /// Find free UDP ports instead of TCP
+        #[arg(long)]
+        udp: bool,
     },
 
     /// Print shell completion script for the given shell
