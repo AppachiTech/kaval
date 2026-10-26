@@ -114,8 +114,10 @@ enum Background {
         name: String,
         result: std::result::Result<(), String>,
     },
-    #[allow(dead_code)] // TODO(v0.2 Task 15): `p` health probe
-    Probe { port: u16, health: probe::Health },
+    Probe {
+        port: u16,
+        health: probe::Health,
+    },
 }
 
 fn scan(app: &mut App, scanner: &mut Scanner, sample_cpu: bool) {
@@ -146,10 +148,13 @@ fn kill(
                     continue;
                 }
                 match killer::send(pid, signal) {
-                    Ok(()) | Err(SendError::NoSuchProcess) => app.set_status(
-                        format!("Sent {signal} to {} (PID {pid})", target.name),
-                        false,
-                    ),
+                    Ok(()) | Err(SendError::NoSuchProcess) => {
+                        app.set_status(
+                            format!("Sent {signal} to {} (PID {pid})", target.name),
+                            false,
+                        );
+                        app.kill_sent(&target, signal, Instant::now());
+                    }
                     Err(e) => app.set_status(format!("Kill failed: {e}"), true),
                 }
             }
@@ -177,7 +182,8 @@ fn on_background(app: &mut App, msg: Background) {
             Err(e) => app.set_status(format!("docker stop {name} failed: {e}"), true),
         },
         Background::Probe { port, health } => {
-            app.set_status(format!("Probe :{port} — {:?}", health.result), false);
+            app.set_status(format!("Port {port}: {}", probe::describe(&health)), false);
+            app.probe_done(port, health, Instant::now());
         }
     }
 }

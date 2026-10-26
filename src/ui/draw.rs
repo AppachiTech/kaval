@@ -10,8 +10,12 @@ use ratatui::{
 
 use super::app::{App, STATUS_TTL};
 use crate::killer::{Action, Signal};
-use crate::models::{PortEntry, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD};
+use crate::models::{
+    Exposure, PortEntry, Protocol, ServiceSource, CPU_ERROR_THRESHOLD, CPU_WARN_THRESHOLD,
+};
 use crate::output::sanitize;
+use crate::probe::describe;
+use crate::project::display_path;
 use crate::theme::theme;
 
 /// Below this width the detail pane goes under the table instead of beside it.
@@ -71,6 +75,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.confirm.is_some() {
         draw_kill_confirm(f, app);
+    }
+    if app.yank_menu {
+        draw_yank_menu(f);
     }
     if app.show_help {
         draw_help_overlay(f, app);
@@ -365,87 +372,152 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let t = theme();
     let label = |s: &'static str| Span::styled(s, Style::default().fg(t.text_secondary));
+    let value = |s: String| Span::styled(s, Style::default().fg(t.text));
+    let muted = |s: String| Span::styled(s, Style::default().fg(t.text_muted));
 
-    let content = if let Some(entry) = app.selected_entry() {
-        let exited = entry.process_name == "<exited>";
-        let mut lines = vec![
-            Line::from(vec![
+    let mut lines: Vec<Line> = Vec::new();
+    match app.selected_entry() {
+        None => lines.push(Line::from(muted("No port selected".into()))),
+        Some(e) => {
+            let category = Style::default().fg(t.category_color(e.category));
+            let exited = e.process_name == "<exited>";
+            lines.push(Line::from(vec![
                 label("Port: "),
                 Span::styled(
-                    format!("{} ({})", entry.port, entry.protocol),
+                    format!("{} ({})", e.port, e.protocol),
                     Style::default().fg(t.text).add_modifier(Modifier::BOLD),
                 ),
-            ]),
-            Line::from(vec![
+            ]));
+            let (bind, warn) = match e.exposure() {
+                Exposure::Loopback => ("localhost only".to_string(), false),
+                Exposure::AllInterfaces => (
+                    "all interfaces — reachable from other machines".to_string(),
+                    true,
+                ),
+                Exposure::Network(ip) => (format!("{ip} — reachable on that network"), true),
+            };
+            lines.push(Line::from(vec![
+                label("Bind: "),
+                Span::styled(
+                    bind,
+                    Style::default().fg(if warn { t.warning } else { t.text }),
+                ),
+            ]));
+            lines.push(Line::from(vec![
                 label("Address: "),
-                Span::styled(entry.addr_display(), Style::default().fg(t.text)),
-            ]),
-            Line::from(vec![
+                value(e.addr_display()),
+            ]));
+            lines.push(Line::from(vec![
                 label("Process: "),
                 Span::styled(
-                    sanitize(&entry.process_name).into_owned(),
-                    Style::default().fg(if exited {
-                        t.text_muted
+                    sanitize(&e.process_name).into_owned(),
+                    if exited {
+                        Style::default().fg(t.text_muted)
                     } else {
-                        t.category_color(entry.category)
-                    }),
+                        category
+                    },
                 ),
-            ]),
-            Line::from(vec![
-                label("PID: "),
-                Span::styled(pid_text(entry.pid), Style::default().fg(t.text)),
-            ]),
-            Line::from(vec![
+                muted(format!(" (PID {})", pid_text(e.pid))),
+            ]));
+            if let Some(user) = &e.user {
+                lines.push(Line::from(vec![
+                    label("User: "),
+                    value(sanitize(user).into_owned()),
+                ]));
+            }
+            let source = match e.service.as_ref().map(|s| s.source) {
+                Some(ServiceSource::Port) => " (guessed from the port)",
+                Some(ServiceSource::Command) => " (from the command line)",
+                _ => "",
+            };
+            lines.push(Line::from(vec![
                 label("Service: "),
                 Span::styled(
-                    sanitize(entry.service_name().unwrap_or("Unknown")).into_owned(),
-                    Style::default().fg(t.category_color(entry.category)),
+                    sanitize(e.service_name().unwrap_or("Unknown")).into_owned(),
+                    category,
                 ),
-            ]),
-            Line::from(""),
-        ];
-
-        if exited {
-            lines.push(Line::from(Span::styled(
-                "Process exited during scan. The socket was still",
-                Style::default().fg(t.text_muted),
-            )));
-            lines.push(Line::from(Span::styled(
-                "open when ports were enumerated. Refresh to clear.",
-                Style::default().fg(t.text_muted),
-            )));
-        } else {
-            lines.extend([
-                Line::from(vec![
+                muted(source.into()),
+            ]));
+            if let Some(project) = &e.project {
+                lines.push(Line::from(vec![
+                    label("Project: "),
+                    value(sanitize(project).into_owned()),
+                ]));
+            }
+            if let Some(cwd) = &e.cwd {
+                lines.push(Line::from(vec![
+                    label("Directory: "),
+                    muted(sanitize(&display_path(cwd, app.home.as_deref())).into_owned()),
+                ]));
+            }
+            if let Some(parent) = &e.parent {
+                lines.push(Line::from(vec![
+                    label("Parent: "),
+                    value(format!("{} (PID {})", sanitize(&parent.name), parent.pid)),
+                ]));
+            }
+            if let Some(c) = &e.container {
+                let compose = c
+                    .compose_project
+                    .as_deref()
+                    .map(|p| format!(", compose {p}"))
+                    .unwrap_or_default();
+                lines.push(Line::from(vec![
+                    label("Container: "),
+                    value(sanitize(&format!("{} ({}{compose})", c.name, c.image)).into_owned()),
+                ]));
+            }
+            if e.protocol == Protocol::Tcp {
+                let clients = if e.clients.is_empty() {
+                    "none".to_string()
+                } else {
+                    let names: Vec<String> = e
+                        .clients
+                        .iter()
+                        .take(5)
+                        .map(|c| match (&c.process, c.pid) {
+                            (Some(name), Some(pid)) => format!("{} ({pid})", sanitize(name)),
+                            _ => c.addr.to_string(),
+                        })
+                        .collect();
+                    format!("{} — {}", e.clients.len(), names.join(", "))
+                };
+                lines.push(Line::from(vec![label("Connections: "), value(clients)]));
+                lines.push(Line::from(match app.probes.get(&e.port) {
+                    Some((health, at)) => vec![
+                        label("Health: "),
+                        value(describe(health)),
+                        muted(format!(" ({}s ago)", at.elapsed().as_secs())),
+                    ],
+                    None => vec![label("Health: "), muted("press p to probe".into())],
+                }));
+            }
+            if let Some(note) = e.service.as_ref().and_then(|s| s.note) {
+                lines.push(Line::from(Span::styled(
+                    note,
+                    Style::default().fg(t.warning),
+                )));
+            }
+            lines.push(Line::from(""));
+            if exited {
+                lines.push(Line::from(muted(
+                    "The process exited during the scan. Refresh to clear.".into(),
+                )));
+            } else {
+                lines.push(Line::from(vec![
                     label("CPU: "),
-                    Span::styled(
-                        format!("{:.1}%", entry.cpu_percent),
-                        Style::default().fg(t.text),
-                    ),
-                ]),
-                Line::from(vec![
-                    label("Memory: "),
-                    Span::styled(entry.memory_display(), Style::default().fg(t.text)),
-                ]),
-                Line::from(vec![
-                    label("Uptime: "),
-                    Span::styled(entry.uptime_display(), Style::default().fg(t.text)),
-                ]),
-                Line::from(""),
-                Line::from(label("Command:")),
-                Line::from(Span::styled(
-                    sanitize(&entry.cmd_display()).into_owned(),
-                    Style::default().fg(t.text_muted),
-                )),
-            ]);
+                    value(format!("{:.1}%", e.cpu_percent)),
+                    label("   Memory: "),
+                    value(e.memory_display()),
+                    label("   Uptime: "),
+                    value(e.uptime_display()),
+                ]));
+                lines.push(Line::from(""));
+                lines.push(Line::from(label("Command:")));
+                lines.push(Line::from(muted(sanitize(&e.cmd_display()).into_owned())));
+            }
         }
-        lines
-    } else {
-        vec![Line::from(Span::styled(
-            "No port selected",
-            Style::default().fg(t.text_muted),
-        ))]
-    };
+    }
 
     let scroll_hint = if app.detail_scroll > 0 {
         " Detail ([ ] to scroll) ▲ "
@@ -456,11 +528,40 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         .title(scroll_hint)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.border));
-    let paragraph = Paragraph::new(content)
+    let paragraph = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
     f.render_widget(paragraph, area);
+}
+
+/// The menu shown after `y`: what to copy.
+fn draw_yank_menu(f: &mut Frame) {
+    let t = theme();
+    let rows = [
+        ("p / y", "port"),
+        ("i", "PID"),
+        ("u", "URL"),
+        ("c", "command line"),
+        ("d", "working directory"),
+    ];
+    let mut lines = vec![Line::from("")];
+    for (key, what) in rows {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {key:<7}"),
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(what, Style::default().fg(t.text_muted)),
+        ]));
+    }
+    let area = centered(f.area(), 34, lines.len() as u16 + 2);
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .title(" Copy… ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.primary));
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -536,7 +637,7 @@ const HELP_ROWS: [(&str, &str); 20] = [
     ("S", "Reverse the sort"),
     ("t / Ctrl+T", "Cycle protocols: TCP+UDP → TCP → UDP"),
     ("r / Ctrl+R", "Refresh now"),
-    ("y  o", "Copy port · Open in browser"),
+    ("y  o  p", "Copy… (port/PID/URL/cmd/dir) · Open · Probe"),
     ("Ctrl+Z", "Suspend"),
     ("q / Ctrl+Q", "Quit"),
     ("?", "Show / dismiss this help"),
@@ -628,19 +729,40 @@ fn draw_kill_confirm(f: &mut Frame, app: &App) {
             ports.join(", ")
         ))),
     ];
+    if confirm.targets.len() > 1 {
+        text.push(Line::from(muted(format!(
+            "  and {} more marked row(s)",
+            confirm.targets.len() - 1
+        ))));
+    }
     if let Some(warning) = target.warning {
         text.push(Line::from(Span::styled(
             format!("  {warning}"),
             Style::default().fg(t.warning),
         )));
     }
+    let parent = confirm
+        .parent_targets
+        .as_ref()
+        .and_then(|p| p.first())
+        .and_then(|p| p.via_parent.as_ref());
     text.push(Line::from(""));
     text.push(Line::from(Span::styled(
-        "  y confirm · any other key cancels",
+        match parent {
+            Some(p) => format!(
+                "  y confirm · p stop the parent {} (PID {}) instead · other keys cancel",
+                sanitize(&p.name),
+                p.pid
+            ),
+            None => "  y confirm · any other key cancels".to_string(),
+        },
         Style::default().fg(t.text_muted),
     )));
 
-    let height = if target.warning.is_some() { 10 } else { 7 };
+    let height = 7
+        + u16::from(target.warning.is_some()) * 3
+        + u16::from(confirm.targets.len() > 1)
+        + u16::from(parent.is_some());
     let area = centered(f.area(), 64, height);
     f.render_widget(Clear, area);
     let block = Block::default()
@@ -749,6 +871,67 @@ mod tests {
         let out = render(&mut app, 160, 12);
         assert!(out[1].contains("exposed only"), "{}", out[1]);
         assert!(out[1].contains("reversed"), "{}", out[1]);
+    }
+
+    #[test]
+    fn detail_shows_project_parent_container_clients() {
+        let mut e = entry(6333, 21743, "com.docker.backend");
+        e.addrs = vec![std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)];
+        e.project = Some("shop".into());
+        e.user = Some("madhu".into());
+        e.parent = Some(crate::models::ProcessRef {
+            pid: 1,
+            name: "launchd".into(),
+        });
+        e.container = Some(crate::models::ContainerInfo {
+            id: "517d48f91bc3".into(),
+            name: "roo-qdrant".into(),
+            image: "qdrant/qdrant".into(),
+            compose_project: None,
+        });
+        e.clients = vec![crate::models::Client {
+            addr: "127.0.0.1:60000".parse().unwrap(),
+            pid: Some(4521),
+            process: Some("psql".into()),
+        }];
+        let mut app = app_with(vec![e]);
+        let out = text(&render(&mut app, 150, 40));
+        for needle in [
+            "shop",
+            "madhu",
+            "launchd",
+            "roo-qdrant",
+            "qdrant/qdrant",
+            "psql",
+            "reachable",
+        ] {
+            assert!(out.contains(needle), "detail lacks {needle}:\n{out}");
+        }
+    }
+
+    #[test]
+    fn kill_dialog_shows_parent_and_container_actions() {
+        let mut node = entry(3000, 200, "node");
+        node.parent = Some(crate::models::ProcessRef {
+            pid: 100,
+            name: "nodemon".into(),
+        });
+        let mut app = app_with(vec![node]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        let out = text(&render(&mut app, 100, 20));
+        assert!(out.contains("nodemon") && out.contains("parent"), "{out}");
+
+        let mut proxy = entry(6333, 21743, "com.docker.backend");
+        proxy.container = Some(crate::models::ContainerInfo {
+            id: "517d48f91bc3".into(),
+            name: "roo-qdrant".into(),
+            image: "qdrant/qdrant".into(),
+            compose_project: None,
+        });
+        let mut app = app_with(vec![proxy]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        let out = text(&render(&mut app, 100, 20));
+        assert!(out.contains("docker stop roo-qdrant"), "{out}");
     }
 
     #[test]

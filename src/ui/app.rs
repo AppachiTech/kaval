@@ -2,7 +2,8 @@
 //! loop carries out, so key handling is testable without a terminal.
 
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{
@@ -13,14 +14,19 @@ use ratatui::widgets::TableState;
 
 use crate::killer::{self, Action, KillEnv, KillOptions, KillTarget, Signal};
 use crate::models::{
-    count_browser_groups, matches_filter, sort_entries, EntryKey, PortEntry, SortField,
+    count_browser_groups, matches_filter, sort_entries, EntryKey, Exposure, PortEntry, Protocol,
+    ServiceCategory, SortField,
 };
+use crate::probe::Health;
 use crate::scanner::{Snapshot, Visibility};
+use crate::services::{is_http_like, is_https_port};
 
 /// How long a status-bar message stays visible.
 pub(super) const STATUS_TTL: Duration = Duration::from_secs(3);
 /// How long a row that appeared after startup stays marked as new.
 pub(super) const NEW_ROW_TTL: Duration = Duration::from_secs(10);
+/// How long to wait for a signalled process before saying it is still running.
+const PENDING_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Something the event loop should do in response to input.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,7 +42,6 @@ pub enum Effect {
         targets: Vec<KillTarget>,
         signal: Signal,
     },
-    #[allow(dead_code)] // TODO(v0.2 Task 15): `p` health probe
     Probe {
         ip: IpAddr,
         port: u16,
@@ -50,6 +55,17 @@ pub enum Effect {
 pub(super) struct Confirm {
     pub targets: Vec<KillTarget>,
     pub signal: Signal,
+    /// The same kill aimed at the listener's parent (`p` in the dialog).
+    pub parent_targets: Option<Vec<KillTarget>>,
+}
+
+/// A signal that was sent; the next scans report whether it worked.
+pub(super) struct PendingKill {
+    pid: u32,
+    name: String,
+    ports: Vec<u16>,
+    signal: Signal,
+    sent_at: Instant,
 }
 
 /// What a table row stands for, so the selection survives refreshes.
@@ -93,6 +109,12 @@ pub struct App {
     expanded: HashSet<(u32, String)>,
     /// Rows marked with Space for a multi-row kill.
     pub(super) marked: HashSet<EntryKey>,
+    /// `y` was pressed; the next key picks what to copy.
+    pub(super) yank_menu: bool,
+    /// Latest health probe per TCP port.
+    pub(super) probes: HashMap<u16, (Health, Instant)>,
+    pub(super) pending_kills: Vec<PendingKill>,
+    pub(super) home: Option<PathBuf>,
     pub(super) show_detail: bool,
     pub(super) detail_scroll: u16,
     pub(super) confirm: Option<Confirm>,
@@ -126,6 +148,10 @@ impl App {
             first_seen: HashMap::new(),
             expanded: HashSet::new(),
             marked: HashSet::new(),
+            yank_menu: false,
+            probes: HashMap::new(),
+            pending_kills: Vec::new(),
+            home: std::env::var_os("HOME").map(PathBuf::from),
             show_detail: true,
             detail_scroll: 0,
             confirm: None,
@@ -171,7 +197,71 @@ impl App {
         self.entries = snapshot.entries;
         self.visibility = snapshot.visibility;
         self.loading = false;
+        self.check_pending_kills(now);
         self.resort();
+    }
+
+    /// Remember a signal so later scans can say whether the port was freed.
+    pub(super) fn kill_sent(&mut self, target: &KillTarget, signal: Signal, now: Instant) {
+        if let Action::Signal { pid, .. } = target.action {
+            self.pending_kills.push(PendingKill {
+                pid,
+                name: target.name.clone(),
+                ports: target.ports.clone(),
+                signal,
+                sent_at: now,
+            });
+        }
+    }
+
+    fn check_pending_kills(&mut self, now: Instant) {
+        let entries = &self.entries;
+        let mut messages = Vec::new();
+        self.pending_kills.retain(|k| {
+            let ports = k
+                .ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !entries.iter().any(|e| e.pid == Some(k.pid)) {
+                messages.push(match entries.iter().find(|e| k.ports.contains(&e.port)) {
+                    Some(e) => (
+                        format!(
+                            "Stopped {} (PID {}), but port {} was taken again by {} — see --parent",
+                            k.name, k.pid, e.port, e.process_name
+                        ),
+                        true,
+                    ),
+                    None => (
+                        format!("Stopped {} (PID {}) — port {ports} is free", k.name, k.pid),
+                        false,
+                    ),
+                });
+                false
+            } else if now.saturating_duration_since(k.sent_at) >= PENDING_KILL_TIMEOUT {
+                messages.push((
+                    format!(
+                        "{} (PID {}) still running {}s after {} — press Ctrl+K to force kill",
+                        k.name,
+                        k.pid,
+                        PENDING_KILL_TIMEOUT.as_secs(),
+                        k.signal
+                    ),
+                    true,
+                ));
+                false
+            } else {
+                true
+            }
+        });
+        for (text, error) in messages {
+            self.set_status(text, error);
+        }
+    }
+
+    pub(super) fn probe_done(&mut self, port: u16, health: Health, now: Instant) {
+        self.probes.insert(port, (health, now));
     }
 
     pub(super) fn is_expanded(&self, key: &(u32, String)) -> bool {
@@ -326,15 +416,32 @@ impl App {
         }
         let targets = killer::plan(&rows, &KillOptions::default(), &self.env);
         if targets.len() > 1 {
-            self.confirm = Some(Confirm { targets, signal });
+            self.confirm = Some(Confirm {
+                targets,
+                signal,
+                parent_targets: None,
+            });
             return;
         }
+        // Offer the parent (e.g. nodemon) when it is a process kav may stop.
+        let parent_options = KillOptions {
+            target_parent: true,
+            ..KillOptions::default()
+        };
+        let parent_targets = Some(killer::plan(&rows, &parent_options, &self.env))
+            .filter(|t| matches!(t.first().map(|t| &t.action), Some(Action::Signal { .. })));
         match targets.first().map(|t| &t.action) {
             Some(Action::Refuse(reason)) => {
                 let reason = reason.clone();
                 self.set_status(format!("Not killing: {reason}"), true);
             }
-            Some(_) => self.confirm = Some(Confirm { targets, signal }),
+            Some(_) => {
+                self.confirm = Some(Confirm {
+                    targets,
+                    signal,
+                    parent_targets,
+                })
+            }
             None => {}
         }
     }
@@ -360,17 +467,32 @@ impl App {
             return vec![];
         }
 
-        // Kill confirmation takes priority: `y` confirms, anything else cancels.
+        // Kill confirmation takes priority: `y` confirms, `p` targets the
+        // parent instead (when offered), anything else cancels.
         if let Some(confirm) = self.confirm.take() {
-            if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-                self.marked.clear();
-                return vec![Effect::Kill {
-                    targets: confirm.targets,
-                    signal: confirm.signal,
-                }];
-            }
-            self.set_status("Kill cancelled", false);
-            return vec![];
+            let targets = match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(confirm.targets),
+                KeyCode::Char('p') => confirm.parent_targets,
+                _ => None,
+            };
+            return match targets {
+                Some(targets) => {
+                    self.marked.clear();
+                    vec![Effect::Kill {
+                        targets,
+                        signal: confirm.signal,
+                    }]
+                }
+                None => {
+                    self.set_status("Kill cancelled", false);
+                    vec![]
+                }
+            };
+        }
+
+        if self.yank_menu {
+            self.yank_menu = false;
+            return self.yank(key.code);
         }
 
         // Ctrl+key shortcuts work in every mode, including while filtering.
@@ -473,22 +595,59 @@ impl App {
             }
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('?') => self.show_help = true,
-            KeyCode::Char('o') => {
-                if let Some(e) = self.selected_entry() {
-                    return vec![Effect::Open(format!("http://localhost:{}", e.port))];
+            KeyCode::Char('o') => match self.selected_entry().map(browse_url) {
+                Some(Ok(url)) => return vec![Effect::Open(url)],
+                Some(Err(msg)) => self.set_status(msg, true),
+                None => {}
+            },
+            KeyCode::Char('p') => match self.selected_entry().map(probe_effect) {
+                Some(Ok(effect)) => {
+                    self.set_status("Probing…", false);
+                    return vec![effect];
                 }
-            }
-            KeyCode::Char('y') => {
-                if let Some(e) = self.selected_entry() {
-                    return vec![Effect::Copy {
-                        text: e.port.to_string(),
-                        what: "port",
-                    }];
-                }
-            }
+                Some(Err(msg)) => self.set_status(msg, true),
+                None => {}
+            },
+            KeyCode::Char('y') if self.selected_entry().is_some() => self.yank_menu = true,
             _ => {}
         }
         vec![]
+    }
+
+    /// The key after `y`: what to copy from the selected row.
+    fn yank(&mut self, code: KeyCode) -> Vec<Effect> {
+        let Some(e) = self.selected_entry() else {
+            return vec![];
+        };
+        let choice: Option<Result<(String, &'static str), String>> = match code {
+            KeyCode::Char('p') | KeyCode::Char('y') => Some(Ok((e.port.to_string(), "port"))),
+            KeyCode::Char('i') => Some(
+                e.pid
+                    .map(|pid| (pid.to_string(), "PID"))
+                    .ok_or_else(|| "The owner's PID is not visible — run with sudo".to_string()),
+            ),
+            KeyCode::Char('u') => Some(browse_url(e).map(|url| (url, "URL"))),
+            KeyCode::Char('c') => Some(if e.process_cmd.is_empty() {
+                Err("No command line for this process".to_string())
+            } else {
+                Ok((e.cmd_display(), "command"))
+            }),
+            KeyCode::Char('d') => Some(
+                e.cwd
+                    .as_ref()
+                    .map(|cwd| (cwd.display().to_string(), "directory"))
+                    .ok_or_else(|| "No working directory for this process".to_string()),
+            ),
+            _ => None,
+        };
+        match choice {
+            Some(Ok((text, what))) => vec![Effect::Copy { text, what }],
+            Some(Err(msg)) => {
+                self.set_status(msg, true);
+                vec![]
+            }
+            None => vec![],
+        }
     }
 
     /// Wheel scrolls the selection; a left click selects the row under the pointer.
@@ -508,6 +667,60 @@ impl App {
         }
         vec![]
     }
+}
+
+/// URL to open a listener in a browser: https for TLS ports, the bind
+/// address when it listens only on a LAN address, otherwise localhost.
+fn browse_url(e: &PortEntry) -> Result<String, String> {
+    if e.protocol == Protocol::Udp {
+        return Err(format!(
+            "Port {} is UDP — nothing to open in a browser",
+            e.port
+        ));
+    }
+    let web = is_http_like(e.port, e.service.as_ref());
+    let data_store = matches!(
+        e.category,
+        ServiceCategory::Database | ServiceCategory::Cache | ServiceCategory::Queue
+    );
+    if data_store && !web {
+        return Err(format!(
+            "{} on port {} doesn't serve web pages",
+            e.service_name().unwrap_or(&e.process_name),
+            e.port
+        ));
+    }
+    let scheme = if is_https_port(e.port) {
+        "https"
+    } else {
+        "http"
+    };
+    let host = match e.exposure() {
+        Exposure::Network(IpAddr::V6(v6)) => format!("[{v6}]"),
+        Exposure::Network(ip) => ip.to_string(),
+        _ => "localhost".to_string(),
+    };
+    Ok(format!("{scheme}://{host}:{}", e.port))
+}
+
+/// A health probe of the listener (TCP connect, HTTP HEAD for web ports).
+fn probe_effect(e: &PortEntry) -> Result<Effect, String> {
+    if e.protocol == Protocol::Udp {
+        return Err(format!("Port {} is UDP — it can't be probed", e.port));
+    }
+    let ip = match e.exposure() {
+        Exposure::Network(ip) => ip,
+        _ => e
+            .addrs
+            .first()
+            .copied()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+    };
+    Ok(Effect::Probe {
+        ip,
+        port: e.port,
+        http: is_http_like(e.port, e.service.as_ref()),
+    })
 }
 
 #[cfg(test)]
@@ -801,6 +1014,7 @@ mod tests {
     #[test]
     fn y_copies_port_and_o_opens() {
         let mut app = sample();
+        app.handle_key(key(KeyCode::Char('y')));
         assert_eq!(
             app.handle_key(key(KeyCode::Char('y'))),
             vec![Effect::Copy {
@@ -1082,6 +1296,155 @@ mod tests {
         assert!(app.confirm.is_none(), "no plain-letter kill");
         app.handle_key(key(KeyCode::Char('x')));
         assert!(app.confirm.is_none(), "x alone never kills");
+    }
+
+    // --- Task 15b: yank menu, open, probe, parent kill, verified kills ---
+
+    #[test]
+    fn yank_menu_copies_pid() {
+        let mut app = sample();
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('y'))),
+            vec![],
+            "y opens the menu"
+        );
+        assert!(app.yank_menu);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('i'))),
+            vec![Effect::Copy {
+                text: "3000".into(),
+                what: "PID"
+            }]
+        );
+        assert!(!app.yank_menu);
+        app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('y'))),
+            vec![Effect::Copy {
+                text: "3000".into(),
+                what: "port"
+            }],
+            "yy copies the port"
+        );
+        app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Esc)),
+            vec![],
+            "Esc closes the menu"
+        );
+        assert!(!app.yank_menu);
+    }
+
+    #[test]
+    fn yank_url_and_command() {
+        let mut e = entry(5173, 9, "node");
+        e.process_cmd = vec!["node".into(), "vite".into()];
+        let mut app = app_with(vec![e]);
+        app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('u'))),
+            vec![Effect::Copy {
+                text: "http://localhost:5173".into(),
+                what: "URL"
+            }]
+        );
+        app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('c'))),
+            vec![Effect::Copy {
+                text: "node vite".into(),
+                what: "command"
+            }]
+        );
+    }
+
+    #[test]
+    fn open_uses_https_for_443_and_refuses_udp() {
+        let mut app = app_with(vec![entry(443, 1, "caddy")]);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('o'))),
+            vec![Effect::Open("https://localhost:443".into())]
+        );
+        let mut udp = entry(5353, 2, "mdns");
+        udp.protocol = crate::models::Protocol::Udp;
+        let mut app = app_with(vec![udp]);
+        assert_eq!(app.handle_key(key(KeyCode::Char('o'))), vec![]);
+        assert!(app.status.as_ref().unwrap().error);
+        let pg = with_service(
+            entry(5432, 3, "postgres"),
+            "PostgreSQL",
+            ServiceCategory::Database,
+            ServiceSource::Process,
+        );
+        let mut app = app_with(vec![pg]);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('o'))),
+            vec![],
+            "not a web service"
+        );
+        let mut lan = entry(8080, 4, "app");
+        lan.addrs = vec!["192.168.1.5".parse().unwrap()];
+        let mut app = app_with(vec![lan]);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('o'))),
+            vec![Effect::Open("http://192.168.1.5:8080".into())],
+            "a LAN-only bind is opened on its address"
+        );
+    }
+
+    #[test]
+    fn p_emits_probe_effect() {
+        let mut app = sample();
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('p'))),
+            vec![Effect::Probe {
+                ip: "127.0.0.1".parse().unwrap(),
+                port: 3000,
+                http: true
+            }]
+        );
+    }
+
+    #[test]
+    fn kill_dialog_offers_parent_action() {
+        let mut e = entry(3000, 200, "node");
+        e.parent = Some(crate::models::ProcessRef {
+            pid: 100,
+            name: "nodemon".into(),
+        });
+        let mut app = app_with(vec![e]);
+        app.handle_key(ctrl('x'));
+        let confirm = app.confirm.as_ref().unwrap();
+        assert!(confirm.parent_targets.is_some(), "parent offered");
+        match app.handle_key(key(KeyCode::Char('p'))).as_slice() {
+            [Effect::Kill { targets, .. }] => assert_eq!(targets[0].pid, Some(100)),
+            other => panic!("expected the parent kill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pending_kill_reports_exit_or_still_running() {
+        let t0 = Instant::now();
+        let node = entry(3000, 11, "node");
+        let pg = entry(5432, 22, "postgres");
+        let mut app = app_with(vec![node.clone(), pg.clone()]);
+        let targets = killer::plan(&[&node, &pg], &KillOptions::default(), &app.env);
+        for t in &targets {
+            app.kill_sent(t, Signal::Term, t0);
+        }
+        // node is gone one second later: reported as freed
+        app.apply_snapshot(snapshot(vec![pg.clone()]), t0 + Duration::from_secs(1));
+        let text = &app.status.as_ref().unwrap().text;
+        assert!(text.contains("node") && text.contains("free"), "{text}");
+        // postgres is still listening after the timeout
+        app.apply_snapshot(snapshot(vec![pg]), t0 + Duration::from_secs(6));
+        let status = app.status.as_ref().unwrap();
+        assert!(
+            status.error && status.text.contains("still running"),
+            "{}",
+            status.text
+        );
+        assert!(app.pending_kills.is_empty());
     }
 
     // --- browser grouping ---

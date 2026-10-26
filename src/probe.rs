@@ -78,6 +78,18 @@ pub struct Health {
     pub latency: Duration,
 }
 
+/// Human wording for a probe result, e.g. `HTTP 200 in 3 ms`.
+pub fn describe(h: &Health) -> String {
+    let ms = h.latency.as_millis();
+    match h.result {
+        HealthResult::Http(code) => format!("HTTP {code} in {ms} ms"),
+        HealthResult::TcpOpen => format!("accepts TCP connections ({ms} ms)"),
+        HealthResult::Refused => "connection refused".to_string(),
+        HealthResult::Timeout => "no response (timed out)".to_string(),
+        HealthResult::Unsupported => "not probed (UDP)".to_string(),
+    }
+}
+
 /// Wildcard binds are probed on loopback.
 fn probe_target(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {

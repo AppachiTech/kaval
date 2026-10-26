@@ -92,7 +92,6 @@ pub struct Client {
 }
 
 /// Identity of a row across refreshes: protocol, port and owning PID.
-#[allow(dead_code)] // TODO(v0.2 Task 14): selection identity
 pub type EntryKey = (Protocol, u16, Option<u32>);
 
 /// One listening socket owner: a (protocol, port, pid) with all its bind addresses.
@@ -118,7 +117,6 @@ pub struct PortEntry {
     pub service: Option<Service>,
     pub category: ServiceCategory,
     pub container: Option<ContainerInfo>,
-    #[allow(dead_code)] // TODO(v0.2 Task 15): connections in the detail pane
     pub clients: Vec<Client>,
 }
 
@@ -147,7 +145,6 @@ pub fn format_uptime(uptime: Duration) -> String {
 
 impl PortEntry {
     /// Identity used to keep selections and highlights stable across refreshes.
-    #[allow(dead_code)] // TODO(v0.2 Task 14)
     pub fn key(&self) -> EntryKey {
         (self.protocol, self.port, self.pid)
     }

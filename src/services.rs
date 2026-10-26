@@ -353,7 +353,6 @@ const PORT_RULES: &[(u16, &str, C)] = &[
 ];
 
 /// Ports that usually speak HTTP, whatever owns them (used for "open in browser" and probes).
-#[allow(dead_code)] // TODO(v0.2 Task 15): TUI open / probes
 const WEB_PORTS: &[u16] = &[
     80, 443, 1313, 3000, 3001, 4000, 4200, 4321, 5000, 5173, 5174, 5601, 6006, 6333, 7700, 7860,
     8000, 8001, 8008, 8025, 8080, 8081, 8123, 8443, 8501, 8787, 8888, 9000, 9001, 9090, 9200,
@@ -430,7 +429,6 @@ pub fn is_container_proxy(name: &str, cmd: &[String]) -> bool {
 }
 
 /// Ports conventionally served over TLS.
-#[allow(dead_code)] // TODO(v0.2 Task 15): TUI open
 pub fn is_https_port(port: u16) -> bool {
     matches!(port, 443 | 4443 | 5001 | 8443 | 9443)
 }

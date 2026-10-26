@@ -100,17 +100,6 @@ fn run_probe(status: &PortStatus<'_>) -> Option<Health> {
     })
 }
 
-fn probe_text(h: &Health) -> String {
-    let ms = h.latency.as_millis();
-    match h.result {
-        HealthResult::Http(code) => format!("HTTP {code} in {ms} ms"),
-        HealthResult::TcpOpen => format!("accepts TCP connections ({ms} ms)"),
-        HealthResult::Refused => "connection refused".to_string(),
-        HealthResult::Timeout => "no response (timed out)".to_string(),
-        HealthResult::Unsupported => "not probed (UDP)".to_string(),
-    }
-}
-
 fn probe_json(h: &Health) -> json::ProbeJson {
     let (result, http_status) = match h.result {
         HealthResult::Http(code) => ("http", Some(code)),
@@ -187,7 +176,7 @@ pub fn run(args: &CheckArgs, color: ColorChoice) -> Result<ExitCode> {
     let mut check_table = table::CheckTable::new(color, home.as_deref());
     for (status, health) in statuses.iter().zip(&probes) {
         for (i, e) in status.listeners.iter().enumerate() {
-            let probe = health.as_ref().filter(|_| i == 0).map(probe_text);
+            let probe = health.as_ref().filter(|_| i == 0).map(probe::describe);
             check_table.entry(&mut out, e, probe.as_deref())?;
         }
     }
@@ -205,7 +194,7 @@ pub fn run(args: &CheckArgs, color: ColorChoice) -> Result<ExitCode> {
             writeln!(out, "Nothing listening on port {}", status.port)?;
         }
         if let Some(h) = health {
-            writeln!(out, "    probe: {}", probe_text(h))?;
+            writeln!(out, "    probe: {}", probe::describe(h))?;
         }
     }
     if ports.len() > 1 {
