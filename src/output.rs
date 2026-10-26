@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 
 use anyhow::Result;
-use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
+use ratatui::crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 
 use crate::models::{
     self, count_browser_groups, dedup_browser_indices, ServiceCategory, CPU_ERROR_THRESHOLD,

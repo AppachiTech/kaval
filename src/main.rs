@@ -23,7 +23,7 @@ fn run_watch(
     show_tcp: bool,
     show_udp: bool,
 ) -> Result<()> {
-    use crossterm::{cursor, execute, terminal};
+    use ratatui::crossterm::{cursor, execute, terminal};
 
     let color = io::stdout().is_terminal();
     let mut sys = new_system_with_cpu();

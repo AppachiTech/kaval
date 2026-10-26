@@ -17,12 +17,13 @@ name = "kav"
 path = "src/main.rs"
 
 [dependencies]
+# crossterm is used through ratatui's re-export (ratatui::crossterm) so only one version is built.
 ratatui = "0.30"
-crossterm = "0.28"
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
-sysinfo = "0.32"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "user"] }
+libc = "0.2"
 # WATCH: low-activity upstream; wraps platform-specific syscalls (macOS: proc_pidfdinfo,
 # Linux: procfs). Most likely breakage point on OS upgrades.
 # Migration: /proc/net/tcp on Linux (no crate needed); proc-info crate on macOS.

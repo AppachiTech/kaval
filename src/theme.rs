@@ -1,4 +1,4 @@
-use crossterm::style::Color as CtColor;
+use ratatui::crossterm::style::Color as CtColor;
 use ratatui::style::Color;
 
 use crate::models::{Protocol, ServiceCategory};
