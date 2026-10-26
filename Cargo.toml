@@ -1,7 +1,8 @@
 [package]
 name = "kaval"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.95"
 license = "MIT"
 description = "Guard your ports. A developer-focused port and process manager TUI."
 repository = "https://github.com/AppachiTech/kaval"
@@ -11,6 +12,8 @@ authors = ["Madhubalan Appachi <madhu@appachi.tech>"]
 keywords = ["port", "process", "tui", "cli", "network"]
 categories = ["command-line-utilities", "network-programming"]
 default-run = "kav"
+# Repository-only files: the crate needs src/, tests/, build.rs and the docs.
+exclude = ["demo/", ".github/", "docs/", "CLAUDE.md", "Makefile"]
 
 [[bin]]
 name = "kav"
@@ -33,3 +36,8 @@ terminal-colorsaurus = "1"
 # Migration: /proc/net/tcp on Linux (no crate needed); proc-info crate on macOS.
 netstat2 = "0.11"
 anyhow = "1.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
