@@ -788,3 +788,15 @@ fn concurrent_checks_do_not_see_each_other() {
         "every run must see port 1 as free: {codes:?}"
     );
 }
+
+#[test]
+fn kav_without_tty_prints_the_list() {
+    let out = kav(&[]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout_of(&out);
+    assert!(text.contains("PORT") && text.contains("PROCESS"), "{text}");
+    assert!(
+        !text.contains("\x1b[?1049h"),
+        "no alternate screen when piped"
+    );
+}

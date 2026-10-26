@@ -350,11 +350,6 @@ impl Scanner {
         }
     }
 
-    /// The process table as of the last scan.
-    pub fn system(&self) -> &System {
-        &self.sys
-    }
-
     fn refresh(&mut self, pids: &[Pid], kind: ProcessRefreshKind) {
         if !pids.is_empty() {
             self.sys
@@ -511,26 +506,6 @@ impl Scanner {
             .as_ref()
             .map_or(ServiceCategory::Unknown, |s| s.category);
         e
-    }
-}
-
-/// Kill a process by PID. Pass a `System` that has been refreshed.
-pub fn kill_process(sys: &System, pid: u32, force: bool) -> Result<()> {
-    let pid_obj = Pid::from_u32(pid);
-    let proc = sys
-        .process(pid_obj)
-        .ok_or_else(|| anyhow::anyhow!("Process with PID {} not found", pid))?;
-
-    let signal = if force {
-        sysinfo::Signal::Kill // SIGKILL on Unix, TerminateProcess on Windows
-    } else {
-        sysinfo::Signal::Term // SIGTERM on Unix, TerminateProcess on Windows
-    };
-
-    if proc.kill_with(signal).unwrap_or(false) {
-        Ok(())
-    } else {
-        anyhow::bail!("Failed to kill PID {}. Try running with sudo.", pid)
     }
 }
 

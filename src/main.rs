@@ -48,8 +48,26 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         None => {
-            // Default: launch TUI
-            ui::run_tui()?;
+            if io::stdout().is_terminal() {
+                ui::run(ui::TuiOptions {
+                    interval: cli.interval,
+                    mouse: !cli.no_mouse,
+                })?;
+            } else {
+                // Piped or redirected: print the table instead of drawing a TUI.
+                let args = cmd::list::ListArgs {
+                    json: false,
+                    sort: models::SortField::Port,
+                    reverse: false,
+                    filter: None,
+                    watch: false,
+                    interval: cli.interval,
+                    tcp: true,
+                    udp: true,
+                    exposed: false,
+                };
+                cmd::list::run(&args, cli.color)?;
+            }
         }
 
         Some(Command::List {

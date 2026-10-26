@@ -25,6 +25,14 @@ pub struct Cli {
     #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
 
+    /// Seconds between refreshes in the interactive view
+    #[arg(long, value_name = "SECS", default_value = "2", value_parser = parse_interval)]
+    pub interval: Duration,
+
+    /// Don't capture the mouse in the interactive view (keeps terminal text selection)
+    #[arg(long)]
+    pub no_mouse: bool,
+
     /// Colour theme; auto matches the terminal background
     #[arg(long, global = true, value_enum, value_name = "THEME", env = "KAV_THEME", default_value_t = ThemeChoice::Auto)]
     pub theme: ThemeChoice,
