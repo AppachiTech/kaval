@@ -1,5 +1,6 @@
 mod cli;
 mod docker;
+mod killer;
 mod models;
 mod output;
 mod probe;

@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users};
+use sysinfo::{
+    Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, Uid, UpdateKind, Users,
+};
 
 use crate::docker::{ContainerResolver, Mappings};
 use crate::models::{
@@ -322,6 +324,8 @@ fn collect_sockets(tcp: bool, udp: bool) -> Result<Vec<RawSocket>> {
 /// measured between consecutive refreshes of the same `System`.
 pub struct Scanner {
     sys: System,
+    /// Separate table for liveness checks, so polling never disturbs CPU accounting.
+    probe_sys: System,
     users: Users,
     projects: ProjectCache,
     containers: ContainerResolver,
@@ -331,6 +335,7 @@ impl Scanner {
     pub fn new() -> Self {
         Self {
             sys: System::new(),
+            probe_sys: System::new(),
             users: Users::new_with_refreshed_list(),
             projects: ProjectCache::from_env(),
             containers: ContainerResolver::new(Duration::from_secs(5)),
@@ -406,6 +411,22 @@ impl Scanner {
             entries,
             visibility,
         })
+    }
+
+    /// True while `pid` runs and is still the same process: a different start
+    /// time means the PID was reused (`start_time` 0 = unknown). Zombies count as gone.
+    pub fn process_alive(&mut self, pid: u32, start_time: u64) -> bool {
+        let pid = Pid::from_u32(pid);
+        self.probe_sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        match self.probe_sys.process(pid) {
+            None => false,
+            Some(p) if p.status() == ProcessStatus::Zombie => false,
+            Some(p) => start_time == 0 || p.start_time() == start_time,
+        }
     }
 
     fn process_name(&self, pid: u32) -> Option<String> {
