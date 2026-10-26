@@ -1,7 +1,16 @@
-.PHONY: dev test lint install uninstall man help current-version release-patch release-minor release-major check-git-clean bump-version git-push crates-publish package
+.PHONY: dev test lint install uninstall man help current-version release-patch release-minor release-major release-current check-git-clean bump-version git-push crates-publish package
 
 EXECUTABLE_NAME := kav
 INSTALL_PATH := /usr/local/bin
+
+# Download directory / file prefix for `make package`, as releases name them.
+ifeq ($(shell uname -s),Darwin)
+  PACKAGE_PLATFORM := macos
+else ifneq ($(filter aarch64 arm64,$(shell uname -m)),)
+  PACKAGE_PLATFORM := linux-arm64
+else
+  PACKAGE_PLATFORM := linux
+endif
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -13,11 +22,11 @@ dev: ## Run the application in development mode
 	cargo run
 
 test: ## Run tests
-	cargo test
+	cargo test --locked
 
-lint: ## Run format check and clippy
+lint: ## Run format check and clippy (tests included, as CI does)
 	cargo fmt -- --check
-	cargo clippy -- -D warnings
+	cargo clippy --locked --all-targets -- -D warnings
 
 install: ## Build release binary and install to /usr/local/bin (may require sudo)
 	cargo build --release
@@ -28,6 +37,7 @@ uninstall: ## Remove binary from /usr/local/bin (may require sudo)
 
 man: ## Generate and install man page (may require sudo)
 	cargo build --release
+	sudo mkdir -p /usr/local/share/man/man1
 	./target/release/$(EXECUTABLE_NAME) man | sudo tee /usr/local/share/man/man1/$(EXECUTABLE_NAME).1 > /dev/null
 	@echo "\033[32mMan page installed at /usr/local/share/man/man1/$(EXECUTABLE_NAME).1\033[0m"
 
@@ -87,9 +97,13 @@ release-major: check-git-clean ## Bump major version (0.x.x -> 1.0.0), push, and
 	@$(MAKE) git-push
 	@$(MAKE) crates-publish
 
-package: ## Create a release tarball with binary and license
-	cargo build --release
-	cp target/release/$(EXECUTABLE_NAME) .
-	tar -czf $(EXECUTABLE_NAME)-macos.tar.gz $(EXECUTABLE_NAME) LICENSE scripts/uninstall.sh
-	rm -f $(EXECUTABLE_NAME)
-	@echo "\033[32mCreated $(EXECUTABLE_NAME)-macos.tar.gz\033[0m"
+release-current: check-git-clean ## Tag the version already in Cargo.toml (no bump), push, and publish to crates.io
+	cargo publish --dry-run
+	git tag "v$$(make current-version)"
+	@$(MAKE) git-push
+	@$(MAKE) crates-publish
+
+package: ## Build this machine's release tarball (kav, man page, licence, uninstaller) into target/dist
+	cargo build --release --locked
+	scripts/package.sh target/release/$(EXECUTABLE_NAME) $(PACKAGE_PLATFORM) v$$(make current-version) target/dist
+	@echo "\033[32mCreated target/dist/$(PACKAGE_PLATFORM)/\033[0m"

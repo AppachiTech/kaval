@@ -5,121 +5,285 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default; only the GitHub release job may write.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Actions are pinned to full commit SHAs (tag in the trailing comment).
 jobs:
-  build:
+  # Every CI check (tests on all four platforms, audit, MSRV, musl) gates the release.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  verify-tag:
+    name: Tag matches Cargo.toml and CHANGELOG
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          fi
+          if ! grep -qF "## [$version]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no [$version] section"
+            exit 1
+          fi
+
+  build-macos:
+    name: macOS universal binary
+    needs: [test, verify-tag]
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Pin the build date to the tagged commit
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Build both architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Combine into a universal binary
+        run: |
+          lipo -create -output kav \
+            target/aarch64-apple-darwin/release/kav \
+            target/x86_64-apple-darwin/release/kav
+          lipo -verify_arch kav arm64 x86_64
+          lipo -info kav
+          ./kav --version | grep -F " ${TAG#v} "
+          ./kav list
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then
+            arch -x86_64 ./kav --version
+          fi
+
+      - name: Package
+        run: scripts/package.sh kav macos "$TAG" dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-macos
+          path: dist/
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux static binary (${{ matrix.platform }})
+    needs: [test, verify-tag]
     strategy:
       matrix:
         include:
-          - os: macos-latest
-            platform: macos
-            sha_cmd: "shasum -a 256"
-          - os: ubuntu-latest
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
             platform: linux
-            sha_cmd: "sha256sum"
-    runs-on: ${{ matrix.os }}
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.ref_name }}
+      BIN: target/${{ matrix.target }}/release/kav
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
-      - name: Build Binary (Release)
-        run: cargo build --release
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Prepare Artifacts
+      - name: Pin the build date to the tagged commit
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      # Static musl binaries run on any distribution, old glibc or none.
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Check the binary is static and runs
         run: |
-          mkdir -p artifacts/${{ matrix.platform }}/archive
-          cp target/release/kav kav
-          tar -czf artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz kav LICENSE scripts/uninstall.sh
-          ${{ matrix.sha_cmd }} artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz | awk '{print $1}' > artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256
-          cp artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz artifacts/${{ matrix.platform }}/archive/kav-${{ matrix.platform }}-${{ github.ref_name }}.tar.gz
-          cp artifacts/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256 artifacts/${{ matrix.platform }}/archive/kav-${{ matrix.platform }}-${{ github.ref_name }}.tar.gz.sha256
+          file "$BIN"
+          file "$BIN" | grep -Eq 'static(ally|-pie) linked'
+          "$BIN" --version | grep -F " ${TAG#v} "
+          "$BIN" list
+
+      - name: Package
+        run: scripts/package.sh "$BIN" ${{ matrix.platform }} "$TAG" dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  upload:
+    name: Publish to downloads.appachi.tech
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify checksums
+        working-directory: dist
+        run: |
+          find . -type f | sort
+          for f in */*.tar.gz */archive/*.tar.gz; do
+            echo "$(cat "$f.sha256")  $f" | sha256sum -c -
+          done
 
       - name: Upload to Cloudflare R2
-        uses: ryand56/r2-upload-action@v1.4
+        uses: ryand56/r2-upload-action@33ebb7a494b3a8a3c5ed2ea6bbdc72e707090317 # v1.5
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
           r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           r2-bucket: ${{ secrets.R2_BUCKET }}
-          source-dir: artifacts
+          source-dir: dist
           destination-dir: ./
 
-      - name: Purge Cloudflare CDN Cache
+      - name: Purge the -latest files from the CDN cache
+        env:
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          CF_PURGE_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
         run: |
-          curl -s -X POST \
-            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/purge_cache" \
-            -H "Authorization: Bearer ${{ secrets.CF_PURGE_TOKEN }}" \
+          jq -n '{files: [("macos", "linux", "linux-arm64") as $p | ("", ".sha256") as $ext
+            | "https://downloads.appachi.tech/\($p)/kav-\($p)-latest.tar.gz\($ext)"]}' > purge.json
+          cat purge.json
+          if ! curl --fail-with-body -sS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $CF_PURGE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{
-              "files": [
-                "https://downloads.appachi.tech/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz",
-                "https://downloads.appachi.tech/${{ matrix.platform }}/kav-${{ matrix.platform }}-latest.tar.gz.sha256"
-              ]
-            }'
+            --data @purge.json -o response.json; then
+            cat response.json
+            exit 1
+          fi
+          jq -e '.success' response.json > /dev/null || { cat response.json; exit 1; }
 
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.platform }}
-          path: artifacts/${{ matrix.platform }}/archive/
-
-  update-homebrew:
-    needs: build
-    runs-on: macos-latest
+  homebrew:
+    name: Update the Homebrew tap
+    needs: upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
-      - name: Download macOS Artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: release-macos
-          path: artifacts/
+          persist-credentials: false
 
-      - name: Update Homebrew Tap
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write the formula
         run: |
-          TAG=${{ github.ref_name }}
-          TARBALL_NAME="kav-macos-${TAG}.tar.gz"
-          TARBALL_PATH="artifacts/${TARBALL_NAME}"
-          SHASUM=$(shasum -a 256 $TARBALL_PATH | awk '{print $1}')
-          echo "SHA256: $SHASUM"
+          sha() { cat "dist/$1/archive/kav-$1-$TAG.tar.gz.sha256"; }
+          scripts/homebrew-formula.sh "$TAG" "$(sha macos)" "$(sha linux)" "$(sha linux-arm64)" > kaval.rb
+          ruby -c kaval.rb
+          cat kaval.rb
 
-          git clone https://${{ secrets.GH_PAT }}@github.com/AppachiTech/homebrew-kaval.git homebrew-tap
-          cd homebrew-tap
+      # The formula must never point at a file the CDN does not serve, byte for byte.
+      - name: Check the published downloads match
+        run: |
+          for p in macos linux linux-arm64; do
+            url="https://downloads.appachi.tech/$p/archive/kav-$p-$TAG.tar.gz"
+            got=$(curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors "$url" | sha256sum | awk '{print $1}')
+            want=$(cat "dist/$p/archive/kav-$p-$TAG.tar.gz.sha256")
+            echo "$url $got"
+            [ "$got" = "$want" ] || { echo "::error::$url does not match the built tarball"; exit 1; }
+          done
 
-          FORMULA_PATH="Formula/kaval.rb"
-          sed -i '' "s/version \".*\"/version \"${TAG#v}\"/" $FORMULA_PATH
-          NEW_URL="https://downloads.appachi.tech/macos/archive/${TARBALL_NAME}"
-          sed -i '' "s|url \".*\"|url \"${NEW_URL}\"|" $FORMULA_PATH
-          sed -i '' "s/sha256 \".*\"/sha256 \"${SHASUM}\"/" $FORMULA_PATH
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AppachiTech/homebrew-kaval
+          token: ${{ secrets.GH_PAT }}
+          path: homebrew-tap
 
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          cp ../kaval.rb Formula/kaval.rb
+          if git diff --quiet; then
+            echo "Formula already up to date"
+            exit 0
+          fi
           git config user.name "Appachi Bot"
           git config user.email "bot@appachi.tech"
-          git add $FORMULA_PATH
+          git add Formula/kaval.rb
           git commit -m "Update kaval to $TAG"
           git push
 
   release:
-    needs: build
+    name: GitHub release
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      - name: Download macOS Artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: release-macos
-          path: artifacts/macos/
+          persist-credentials: false
 
-      - name: Download Linux Artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-linux
-          path: artifacts/linux/
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Release notes from the changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v v="${TAG#v}" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+          cat notes.md
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          body_path: notes.md
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            artifacts/macos/kav-macos-${{ github.ref_name }}.tar.gz
-            artifacts/macos/kav-macos-${{ github.ref_name }}.tar.gz.sha256
-            artifacts/linux/kav-linux-${{ github.ref_name }}.tar.gz
-            artifacts/linux/kav-linux-${{ github.ref_name }}.tar.gz.sha256
+            dist/*/archive/*.tar.gz
+            dist/*/archive/*.tar.gz.sha256
