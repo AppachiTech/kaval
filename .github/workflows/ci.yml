@@ -5,38 +5,111 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token: CI never writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Actions are pinned to full commit SHAs (tag in the trailing comment).
 jobs:
   check:
+    name: Test (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # Apple Silicon, Intel Mac, Linux x86_64 and Linux arm64 — every platform we ship.
+        os: [macos-latest, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
           components: rustfmt, clippy
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Format check
-        run: cargo fmt -- --check
+        run: cargo fmt --check
 
-      - name: Clippy
-        run: cargo clippy -- -D warnings
+      - name: Clippy (including tests)
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Tests
-        run: cargo test
+        run: cargo test --locked
 
-      - name: Security audit
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-audit
+
+      # RUSTSEC-2024-0436: paste (unmaintained) is a build-time proc-macro that netstat2
+      # pulls in on Linux (via netlink-packet-utils); there is no maintained release to move to.
+      - name: Audit dependencies
+        run: cargo audit --deny warnings --ignore RUSTSEC-2024-0436
+
+  msrv:
+    name: MSRV (1.95)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Check with the minimum supported Rust
+        run: cargo check --locked --all-targets
+
+  musl:
+    name: Static Linux build (musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --locked --target x86_64-unknown-linux-musl
+
+      - name: Check the binary is static and runs
         run: |
-          cargo install cargo-audit --quiet
-          # RUSTSEC-2024-0436: paste (unmaintained) — transitive dep from netstat2, cannot fix upstream
-          cargo audit --deny warnings --ignore RUSTSEC-2024-0436
+          bin=target/x86_64-unknown-linux-musl/debug/kav
+          file "$bin"
+          file "$bin" | grep -Eq 'static(ally|-pie) linked'
+          "$bin" --version
+          "$bin" list
