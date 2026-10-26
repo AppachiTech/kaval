@@ -689,3 +689,79 @@ fn pick_skips_busy_port() {
     let range = format!("{0}-{0}", helper.port);
     assert_eq!(kav(&["pick", "--range", &range]).status.code(), Some(1));
 }
+
+fn kav_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kav"));
+    cmd.args(args).stdin(std::process::Stdio::null());
+    for var in [
+        "COLORTERM",
+        "TERM",
+        "TERM_PROGRAM",
+        "COLORFGBG",
+        "KAV_THEME",
+        "NO_COLOR",
+    ] {
+        cmd.env_remove(var);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn theme_flag_and_env_select_palette() {
+    let truecolor = [("COLORTERM", "truecolor")];
+    // Header text uses text_secondary: light (75,85,99) vs dark (140,140,145).
+    let light = stdout_of(&kav_env(
+        &["list", "--color", "always", "--theme", "light"],
+        &truecolor,
+    ));
+    assert!(light.contains("38;2;75;85;99"), "light palette");
+    let dark = stdout_of(&kav_env(
+        &["list", "--color", "always", "--theme", "dark"],
+        &truecolor,
+    ));
+    assert!(dark.contains("38;2;140;140;145"), "dark palette");
+    let env_light = stdout_of(&kav_env(
+        &["list", "--color", "always"],
+        &[("COLORTERM", "truecolor"), ("KAV_THEME", "light")],
+    ));
+    assert!(env_light.contains("38;2;75;85;99"), "KAV_THEME=light");
+    let flag_wins = stdout_of(&kav_env(
+        &["list", "--color", "always", "--theme", "dark"],
+        &[("COLORTERM", "truecolor"), ("KAV_THEME", "light")],
+    ));
+    assert!(
+        flag_wins.contains("38;2;140;140;145"),
+        "--theme beats KAV_THEME"
+    );
+}
+
+#[test]
+fn colorfgbg_selects_light_palette() {
+    let out = stdout_of(&kav_env(
+        &["list", "--color", "always"],
+        &[("COLORTERM", "truecolor"), ("COLORFGBG", "0;15")],
+    ));
+    assert!(
+        out.contains("38;2;75;85;99"),
+        "COLORFGBG=0;15 means a light background"
+    );
+}
+
+#[test]
+fn no_truecolor_falls_back_to_256_colours() {
+    let out = stdout_of(&kav_env(
+        &["list", "--color", "always"],
+        &[
+            ("TERM", "xterm-256color"),
+            ("TERM_PROGRAM", "Apple_Terminal"),
+        ],
+    ));
+    assert!(out.contains("38;5;"), "256-colour escapes expected");
+    assert!(
+        !out.contains("38;2;"),
+        "no 24-bit escapes for Apple Terminal"
+    );
+}

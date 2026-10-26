@@ -8,6 +8,7 @@ use clap_complete::{generate, Shell};
 use crate::killer::Signal;
 pub use crate::models::SortField;
 use crate::output::ColorChoice;
+use crate::theme::ThemeChoice;
 
 #[derive(Parser)]
 #[command(
@@ -23,6 +24,10 @@ pub struct Cli {
     /// When to use colours
     #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
+
+    /// Colour theme; auto matches the terminal background
+    #[arg(long, global = true, value_enum, value_name = "THEME", env = "KAV_THEME", default_value_t = ThemeChoice::Auto)]
+    pub theme: ThemeChoice,
 }
 
 fn parse_signal(s: &str) -> Result<Signal, String> {

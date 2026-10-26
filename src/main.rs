@@ -11,7 +11,7 @@ mod services;
 mod theme;
 mod ui;
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -30,7 +30,12 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    theme::init(
+        cli.theme,
+        output::color_enabled(cli.color, io::stdout().is_terminal()),
+    );
+    match run(cli) {
         Ok(code) => code,
         Err(e) if is_broken_pipe(&e) => ExitCode::SUCCESS,
         Err(e) => {

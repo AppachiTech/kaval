@@ -698,12 +698,14 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(t.border)),
         )
-        .row_highlight_style(
+        .row_highlight_style(if t.mono {
+            Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
             Style::default()
                 .bg(t.selection_bg)
                 .fg(t.selection_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+                .add_modifier(Modifier::BOLD)
+        });
 
     f.render_stateful_widget(table, area, &mut app.table_state);
 }
