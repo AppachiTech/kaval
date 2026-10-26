@@ -1,5 +1,81 @@
 use std::process::Command;
 
+mod common;
+use common::{kav, Helper};
+
+/// Re-exec target for [`Helper::spawn`]; a no-op in normal test runs.
+#[test]
+fn helper_process() {
+    common::run_helper_from_env();
+}
+
+fn stdout_of(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Extract `"cpu":<value>` from the v1 JSON line describing `port`.
+fn json_cpu_for_port(json: &str, port: u16) -> Option<f64> {
+    let needle = format!("\"port\":{port},");
+    let line = json.lines().find(|l| l.contains(&needle))?;
+    let rest = line.split("\"cpu\":").nth(1)?;
+    let num: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    num.parse().ok()
+}
+
+#[test]
+fn check_reports_helper_pid() {
+    let helper = Helper::spawn("tcp");
+    let out = kav(&["check", &helper.port.to_string()]);
+    assert!(out.status.success(), "check should find the helper");
+    assert!(
+        stdout_of(&out).contains(&helper.pid.to_string()),
+        "helper pid {} missing from:\n{}",
+        helper.pid,
+        stdout_of(&out)
+    );
+}
+
+#[test]
+#[ignore = "red until Task 4a fixes CPU sampling"]
+fn list_cpu_reflects_busy_process() {
+    let helper = Helper::spawn("busy");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let out = kav(&["list", "--json"]);
+    let cpu = json_cpu_for_port(&stdout_of(&out), helper.port)
+        .unwrap_or_else(|| panic!("busy helper missing from JSON:\n{}", stdout_of(&out)));
+    assert!(
+        cpu >= 30.0,
+        "busy helper spins a full core but kav reported {cpu}% CPU"
+    );
+}
+
+#[test]
+#[ignore = "red until Task 4a collects command lines"]
+fn check_shows_command_line() {
+    let helper = Helper::spawn("tcp");
+    let out = kav(&["check", &helper.port.to_string()]);
+    assert!(
+        stdout_of(&out).contains("cmd:"),
+        "check output should include the command line:\n{}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+#[ignore = "red until Task 4b keys rows by protocol"]
+fn tcp_and_udp_on_same_port_are_both_listed() {
+    let helper = Helper::spawn("tcpudp");
+    let port = helper.port.to_string();
+    let out = kav(&["check", &port]);
+    let text = stdout_of(&out);
+    let has = |proto: &str| text.lines().any(|l| l.contains(&port) && l.contains(proto));
+    assert!(has("TCP"), "TCP row missing:\n{text}");
+    assert!(has("UDP"), "UDP row missing:\n{text}");
+}
+
 #[test]
 fn cli_list_runs() {
     let output = Command::new(env!("CARGO_BIN_EXE_kav"))
