@@ -258,6 +258,7 @@ mod tests {
         e.parent = Some(ProcessRef {
             pid: 1,
             name: "launchd".into(),
+            start_time: 0,
         });
         e.cpu_percent = 12.345;
         e.memory_mb = 21.04;

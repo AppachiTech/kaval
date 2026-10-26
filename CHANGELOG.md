@@ -23,11 +23,11 @@ Kaval now shows who owns each port, which project and container it belongs to, a
 ### Added
 - `kav wait <ports>` blocks until the ports are listening, or free with `--free` (`--timeout`, `--udp`, `--quiet`).
 - `kav pick` prints free ports from a range (`--range`, `-n/--count`, `--udp`).
-- `kav list`: a BIND column and `--exposed` (only listeners other machines can reach); a PROJECT column (the git repository the process runs in); `-r/--reverse`; `--udp`; `--interval` for `--watch`; `--filter` also matches command lines, projects, containers and users; columns fit the terminal width.
+- `kav list`: a BIND column and `--exposed` (only listeners other machines can reach); a PROJECT column (the git repository the process runs in); `-r/--reverse`; `--interval` for `--watch`; `--filter` also matches command lines, projects, containers and users; columns fit the terminal width.
 - `kav check` shows each listener's command line, directory, parent, connections, container and notes; reports ports held by other users' processes as in use even without root; and adds `--free` (a pre-flight check), `--json`, `-q/--quiet` and `--probe` (TCP connect, HTTP status for web ports).
 - `kav kill` adds `-s/--signal`, `--timeout`, `--no-wait`, `--escalate` (SIGKILL after the timeout), `--parent` (stop a supervisor such as nodemon), `--allow-protected` and `--json`, and notices when a supervisor restarts what it stopped.
 - Ports published by Docker containers show the container's name, image and compose project.
-- Service detection from the command line of generic runtimes (node, python, java, ruby, php, bun, deno, …) recognises Next.js, Vite, Django, Uvicorn, Rails, Spring Boot, Kafka and more: 140+ services in all. Worker processes inherit their parent's service.
+- Service detection from the command line of generic runtimes (node, python, java, ruby, php, bun, deno, …) recognises Next.js, Vite, Django, Uvicorn, Rails, Tomcat, Kafka and more: 140+ services in all. Worker processes inherit their parent's service.
 - Themes: `--theme auto|dark|light` (or `KAV_THEME`) with automatic detection of light terminals (#1); the nearest 256-colour palette on terminals without true colour; `--color auto|always|never`, `NO_COLOR` and `CLICOLOR_FORCE`.
 - TUI:
   - `e` shows only exposed listeners; new listeners are marked `+` for ten seconds, and new exposed ones are announced.
@@ -37,6 +37,7 @@ Kaval now shows who owns each port, which project and container it belongs to, a
   - The kill dialog shows PID, port and signal, and offers `p` to stop the supervising parent instead. After a kill, the status line reports when the port is free or that the process is still running.
   - The detail pane shows exposure, user, project, directory, parent, container, connections, notes and probe results, and moves below the table on narrow terminals.
   - `s`, `S` (reverse sort), `t`, `d` and `r` work without Ctrl; the mouse selects and scrolls (`--no-mouse` turns that off); `--interval` sets the refresh; `Ctrl+Z` suspends.
+  - A note on the table says when other users' processes are hidden (run with sudo to see them).
   - Running `kav` without a terminal prints the list instead.
 - Release downloads for Intel Macs (one universal macOS binary) and Linux arm64, and static Linux binaries. Every tarball includes the man page and `uninstall.sh`, with a `.sha256` beside it.
 - The Homebrew formula also works on Linux, and installs the man page and bash, zsh and fish completions.

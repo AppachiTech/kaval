@@ -15,7 +15,7 @@ Stop running `lsof -i :3000 | grep LISTEN`. Kaval shows every listening port, wh
 ## Features
 
 - **Everything at a glance** — every TCP and UDP listener with its bind address, process, service, project, PID, CPU, memory and uptime
-- **Knows your stack** — 140+ services detected from command lines, process names and ports: Vite, Next.js, Django, Uvicorn, Rails, Spring Boot, PostgreSQL, Redis, Kafka and more; a trailing `?` marks a guess from the port alone
+- **Knows your stack** — 140+ services detected from command lines, process names and ports: Vite, Next.js, Django, Uvicorn, Rails, Tomcat, PostgreSQL, Redis, Kafka and more; a trailing `?` marks a guess from the port alone
 - **Exposure at a glance** — see which listeners are reachable from other machines (`BIND *`), and list only those with `--exposed`
 - **Projects and containers** — each listener is tied to its git project, and Docker-published ports to their container and compose project
 - **Safe kills** — waits until the port is really free, catches supervisors that restart what you stopped (`--parent`), stops containers with `docker stop`, and refuses to take down container runtimes or system services

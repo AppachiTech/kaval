@@ -18,6 +18,20 @@ struct Pty {
 impl Pty {
     /// Start `kav args…` on a fresh `cols`×`rows` pseudo-terminal.
     fn spawn(args: &[&str], cols: u16, rows: u16) -> Pty {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kav"));
+        cmd.args(args);
+        Pty::start(cmd, cols, rows, false)
+    }
+
+    /// An interactive bash that owns the pty as its controlling terminal, so job
+    /// control works as in a real terminal: `cmd &` runs in a background process group.
+    fn shell(cols: u16, rows: u16) -> Pty {
+        let mut cmd = Command::new("bash");
+        cmd.args(["--norc", "--noprofile", "-i"]);
+        Pty::start(cmd, cols, rows, true)
+    }
+
+    fn start(mut cmd: Command, cols: u16, rows: u16, controlling: bool) -> Pty {
         let (mut master, mut slave) = (0, 0);
         let mut size = libc::winsize {
             ws_row: rows,
@@ -39,19 +53,23 @@ impl Pty {
         let slave = unsafe { File::from_raw_fd(slave) };
         let master = unsafe { File::from_raw_fd(master) };
 
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kav"));
-        cmd.args(args)
-            .stdin(Stdio::from(slave.try_clone().unwrap()))
+        cmd.stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
             .stderr(Stdio::from(slave))
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
-            .env_remove("NO_COLOR");
+            .env_remove("NO_COLOR")
+            .env_remove("COLORFGBG")
+            .env_remove("KAV_THEME");
         // A new session: Ctrl+Z's SIGTSTP is discarded for an orphaned process
         // group instead of stopping kav (and this test) for good.
         unsafe {
-            cmd.pre_exec(|| {
+            cmd.pre_exec(move || {
                 libc::setsid();
+                if controlling {
+                    #[allow(clippy::useless_conversion)] // u32 on macOS, c_ulong on Linux
+                    libc::ioctl(0, libc::TIOCSCTTY.into(), 0);
+                }
                 Ok(())
             });
         }
@@ -173,5 +191,45 @@ fn tui_no_mouse_leaves_mouse_alone() {
         count(&out, b"\x1b[?1000h"),
         0,
         "no mouse capture with --no-mouse"
+    );
+}
+
+/// A port nothing listens on, from `kav pick`.
+fn free_port(range: &str) -> u16 {
+    let out = Command::new(env!("CARGO_BIN_EXE_kav"))
+        .args(["pick", "--range", range])
+        .output()
+        .expect("run kav pick");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .expect("a port")
+}
+
+#[test]
+fn background_job_is_not_stopped_by_the_terminal_query() {
+    // `kav … &` in an interactive shell runs in a background process group; touching
+    // the terminal settings there (the theme query) would stop it with SIGTTOU.
+    let port = free_port("48900-48999");
+    let kav = env!("CARGO_BIN_EXE_kav");
+    let mut sh = Pty::shell(100, 30);
+    // The quotes keep the typed command line (echoed by the pty) from matching.
+    sh.send(
+        b"case $- in *m*) echo \"JOB\"\"CONTROL=on\";; *) echo \"JOB\"\"CONTROL=off\";; esac\n",
+    );
+    sh.wait_for("JOBCONTROL=");
+    assert!(
+        sh.contains(b"JOBCONTROL=on"),
+        "the shell must have job control"
+    );
+    sh.send(format!("{kav} wait {port} --timeout 1 & wait $!; echo \"EX\"\"IT=$?.\"\n").as_bytes());
+    sh.wait_for("EXIT=");
+    let out = String::from_utf8_lossy(&sh.output()).into_owned();
+    // Killing the shell also ends a stopped job: its process group is orphaned.
+    let _ = sh.child.kill();
+    let _ = sh.child.wait();
+    assert!(
+        out.contains("EXIT=1."),
+        "kav wait should time out (exit 1), not be stopped:\n{out}"
     );
 }

@@ -300,9 +300,11 @@ pub fn select(
     }
 }
 
-/// Ask the terminal for its background (OSC 11), only on an interactive terminal.
+/// Ask the terminal for its background (OSC 11), only on an interactive terminal and
+/// only from the foreground: a background job (`kav wait 3000 &`) that changes the
+/// terminal's settings is stopped with SIGTTOU.
 fn query_terminal() -> Option<bool> {
-    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
+    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() || !in_foreground() {
         return None;
     }
     let mut options = terminal_colorsaurus::QueryOptions::default();
@@ -310,6 +312,15 @@ fn query_terminal() -> Option<bool> {
     match terminal_colorsaurus::theme_mode(options).ok()? {
         terminal_colorsaurus::ThemeMode::Light => Some(true),
         terminal_colorsaurus::ThemeMode::Dark => Some(false),
+    }
+}
+
+/// Whether this process is in the terminal's foreground process group.
+fn in_foreground() -> bool {
+    // SAFETY: tcgetpgrp and getpgrp only read process state.
+    unsafe {
+        let fg = libc::tcgetpgrp(libc::STDIN_FILENO);
+        fg != -1 && fg == libc::getpgrp()
     }
 }
 

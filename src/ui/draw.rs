@@ -16,6 +16,7 @@ use crate::models::{
 use crate::output::sanitize;
 use crate::probe::describe;
 use crate::project::display_path;
+use crate::scanner::Visibility;
 use crate::theme::theme;
 
 /// Below this width the detail pane goes under the table instead of beside it.
@@ -304,12 +305,32 @@ fn cell(col: Col, e: &PortEntry, flags: RowFlags) -> Cell<'static> {
     }
 }
 
+/// Why some listeners are missing or anonymous (other users' processes, without root).
+fn hidden_owner_note(visibility: Visibility) -> Option<String> {
+    match visibility {
+        Visibility::Complete => None,
+        Visibility::OtherUsersHidden => {
+            Some(" only your processes are shown — run sudo kav to see all ".to_string())
+        }
+        Visibility::Unattributed(n) => Some(format!(
+            " {n} listener{} with hidden owners — run sudo kav to see who ",
+            if n == 1 { "" } else { "s" }
+        )),
+    }
+}
+
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     let t = theme();
     app.table_area = area;
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.border));
+    if let Some(note) = hidden_owner_note(app.visibility) {
+        block = block.title_bottom(Line::from(Span::styled(
+            note,
+            Style::default().fg(t.text_muted),
+        )));
+    }
 
     // Show loading indicator on first scan
     if app.loading && app.filtered.is_empty() {
@@ -841,6 +862,26 @@ mod tests {
     }
 
     #[test]
+    fn hidden_owners_are_explained() {
+        let mut app = app_with(seven());
+        assert!(!text(&render(&mut app, 100, 20)).contains("sudo"));
+        for (visibility, needle) in [
+            (Visibility::OtherUsersHidden, "only your processes"),
+            (Visibility::Unattributed(2), "2 listeners"),
+        ] {
+            app.apply_snapshot(
+                Snapshot {
+                    entries: seven(),
+                    visibility,
+                },
+                Instant::now(),
+            );
+            let out = text(&render(&mut app, 100, 20));
+            assert!(out.contains(needle) && out.contains("sudo"), "{out}");
+        }
+    }
+
+    #[test]
     fn gutter_marks_new_and_marked_rows() {
         let mut app = app_with(vec![entry(3000, 11, "node"), entry(5432, 22, "postgres")]);
         app.show_detail = false;
@@ -882,6 +923,7 @@ mod tests {
         e.parent = Some(crate::models::ProcessRef {
             pid: 1,
             name: "launchd".into(),
+            start_time: 0,
         });
         e.container = Some(crate::models::ContainerInfo {
             id: "517d48f91bc3".into(),
@@ -915,6 +957,7 @@ mod tests {
         node.parent = Some(crate::models::ProcessRef {
             pid: 100,
             name: "nodemon".into(),
+            start_time: 0,
         });
         let mut app = app_with(vec![node]);
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));

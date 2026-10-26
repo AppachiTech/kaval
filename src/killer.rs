@@ -305,7 +305,9 @@ fn target_for(e: &PortEntry, o: &KillOptions, env: &KillEnv) -> KillTarget {
         warning: None,
         via_parent: None,
     };
-    if let Some(container) = e.container.as_ref().filter(|_| !o.allow_protected) {
+    // A container's port is always freed with `docker stop`, even with --allow-protected:
+    // killing the runtime's port forwarder would stop every container.
+    if let Some(container) = e.container.as_ref() {
         target.name = container.name.clone();
         target.action = Action::DockerStop(container.clone());
         return target;
@@ -324,7 +326,7 @@ fn target_for(e: &PortEntry, o: &KillOptions, env: &KillEnv) -> KillTarget {
                 target.via_parent = Some(p.clone());
                 Action::Signal {
                     pid: p.pid,
-                    start_time: 0,
+                    start_time: p.start_time,
                 }
             }
             Some(p) => Action::Refuse(format!(
@@ -457,6 +459,16 @@ mod tests {
         assert_eq!(targets[0].action, Action::DockerStop(qdrant()));
         assert_eq!(targets[0].ports, vec![6333, 6334]);
         assert_eq!(targets[0].name, "roo-qdrant");
+        // --allow-protected (perhaps meant for another port) must not turn this into
+        // killing the runtime, which would stop every container.
+        let allowed = KillOptions {
+            allow_protected: true,
+            ..opts()
+        };
+        assert_eq!(
+            plan(&[&a], &allowed, &env())[0].action,
+            Action::DockerStop(qdrant())
+        );
     }
 
     #[test]
@@ -497,6 +509,7 @@ mod tests {
         e.parent = Some(ProcessRef {
             pid: 100,
             name: "nodemon".into(),
+            start_time: 1_700_000_123,
         });
         let o = KillOptions {
             target_parent: true,
@@ -506,7 +519,18 @@ mod tests {
         assert_eq!(t.pid, Some(100));
         assert_eq!(t.name, "nodemon");
         assert_eq!(t.via_parent.as_ref().map(|p| p.pid), Some(100));
-        assert!(matches!(t.action, Action::Signal { pid: 100, .. }));
+        // The parent's start time travels with the plan, so a reused PID is never signalled.
+        assert!(
+            matches!(
+                t.action,
+                Action::Signal {
+                    pid: 100,
+                    start_time: 1_700_000_123
+                }
+            ),
+            "{:?}",
+            t.action
+        );
     }
 
     #[test]
@@ -515,6 +539,7 @@ mod tests {
         e.parent = Some(ProcessRef {
             pid: 90,
             name: "zsh".into(),
+            start_time: 0,
         });
         let o = KillOptions {
             target_parent: true,

@@ -64,6 +64,10 @@ pub(super) struct PendingKill {
     pid: u32,
     name: String,
     ports: Vec<u16>,
+    /// The listeners on `ports` when the signal was sent: the signalled process itself,
+    /// or the children of a stopped parent. The ports are free once these are gone.
+    holders: Vec<u32>,
+    via_parent: bool,
     signal: Signal,
     sent_at: Instant,
 }
@@ -204,10 +208,27 @@ impl App {
     /// Remember a signal so later scans can say whether the port was freed.
     pub(super) fn kill_sent(&mut self, target: &KillTarget, signal: Signal, now: Instant) {
         if let Action::Signal { pid, .. } = target.action {
+            let mut holders: Vec<u32> = self
+                .entries
+                .iter()
+                .filter(|e| target.ports.contains(&e.port))
+                .filter(|e| match &target.via_parent {
+                    Some(parent) => e.parent.as_ref().is_some_and(|p| p.pid == parent.pid),
+                    None => e.pid == Some(pid),
+                })
+                .filter_map(|e| e.pid)
+                .collect();
+            holders.sort_unstable();
+            holders.dedup();
+            if holders.is_empty() {
+                holders.push(pid);
+            }
             self.pending_kills.push(PendingKill {
                 pid,
                 name: target.name.clone(),
                 ports: target.ports.clone(),
+                holders,
+                via_parent: target.via_parent.is_some(),
                 signal,
                 sent_at: now,
             });
@@ -218,41 +239,51 @@ impl App {
         let entries = &self.entries;
         let mut messages = Vec::new();
         self.pending_kills.retain(|k| {
-            let ports = k
-                .ports
+            let on_ports = |e: &&PortEntry| k.ports.contains(&e.port);
+            let survivor = entries
                 .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            if !entries.iter().any(|e| e.pid == Some(k.pid)) {
-                messages.push(match entries.iter().find(|e| k.ports.contains(&e.port)) {
-                    Some(e) => (
-                        format!(
-                            "Stopped {} (PID {}), but port {} was taken again by {} — see --parent",
-                            k.name, k.pid, e.port, e.process_name
+                .filter(on_ports)
+                .find(|e| e.pid.is_some_and(|p| k.holders.contains(&p)));
+            match survivor {
+                None => {
+                    messages.push(match entries.iter().find(on_ports) {
+                        Some(e) => (taken_again(k, e), true),
+                        None => (
+                            format!(
+                                "Stopped {} (PID {}) — port {} is free",
+                                k.name,
+                                k.pid,
+                                ports_text(&k.ports)
+                            ),
+                            false,
                         ),
+                    });
+                    false
+                }
+                Some(e) if now.saturating_duration_since(k.sent_at) >= PENDING_KILL_TIMEOUT => {
+                    let secs = PENDING_KILL_TIMEOUT.as_secs();
+                    messages.push((
+                        if k.via_parent {
+                            format!(
+                                "{} (PID {}) still holds port {} {secs}s after {} to {} (PID {})",
+                                e.process_name,
+                                pid_text(e.pid),
+                                e.port,
+                                k.signal,
+                                k.name,
+                                k.pid
+                            )
+                        } else {
+                            format!(
+                                "{} (PID {}) still running {secs}s after {} — press Ctrl+K to force kill",
+                                k.name, k.pid, k.signal
+                            )
+                        },
                         true,
-                    ),
-                    None => (
-                        format!("Stopped {} (PID {}) — port {ports} is free", k.name, k.pid),
-                        false,
-                    ),
-                });
-                false
-            } else if now.saturating_duration_since(k.sent_at) >= PENDING_KILL_TIMEOUT {
-                messages.push((
-                    format!(
-                        "{} (PID {}) still running {}s after {} — press Ctrl+K to force kill",
-                        k.name,
-                        k.pid,
-                        PENDING_KILL_TIMEOUT.as_secs(),
-                        k.signal
-                    ),
-                    true,
-                ));
-                false
-            } else {
-                true
+                    ));
+                    false
+                }
+                Some(_) => true,
             }
         });
         for (text, error) in messages {
@@ -704,6 +735,37 @@ fn browse_url(e: &PortEntry) -> Result<String, String> {
 }
 
 /// A health probe of the listener (TCP connect, HTTP HEAD for web ports).
+fn ports_text(ports: &[u16]) -> String {
+    let ports: Vec<String> = ports.iter().map(u16::to_string).collect();
+    ports.join(", ")
+}
+
+fn pid_text(pid: Option<u32>) -> String {
+    pid.map_or_else(|| "?".to_string(), |p| p.to_string())
+}
+
+/// A pending kill's ports are held by a process that wasn't there before.
+fn taken_again(k: &PendingKill, e: &PortEntry) -> String {
+    let parent = e
+        .parent
+        .as_ref()
+        .map(|p| format!(", started by {} (PID {})", p.name, p.pid))
+        .unwrap_or_default();
+    let hint = if !k.via_parent && e.parent.is_some() {
+        " — press Ctrl+X, then p to stop the parent"
+    } else {
+        ""
+    };
+    format!(
+        "Stopped {} (PID {}), but port {} was taken again by {} (PID {}){parent}{hint}",
+        k.name,
+        k.pid,
+        e.port,
+        e.process_name,
+        pid_text(e.pid)
+    )
+}
+
 fn probe_effect(e: &PortEntry) -> Result<Effect, String> {
     if e.protocol == Protocol::Udp {
         return Err(format!("Port {} is UDP — it can't be probed", e.port));
@@ -1411,6 +1473,7 @@ mod tests {
         e.parent = Some(crate::models::ProcessRef {
             pid: 100,
             name: "nodemon".into(),
+            start_time: 0,
         });
         let mut app = app_with(vec![e]);
         app.handle_key(ctrl('x'));
@@ -1445,6 +1508,84 @@ mod tests {
             status.text
         );
         assert!(app.pending_kills.is_empty());
+    }
+
+    fn supervised_node(pid: u32) -> PortEntry {
+        let mut node = entry(3000, pid, "node");
+        node.parent = Some(crate::models::ProcessRef {
+            pid: 100,
+            name: "nodemon".into(),
+            start_time: 0,
+        });
+        node
+    }
+
+    #[test]
+    fn parent_kill_waits_for_the_listener_to_go() {
+        let t0 = Instant::now();
+        let node = supervised_node(200);
+        let mut app = app_with(vec![node.clone()]);
+        let opts = KillOptions {
+            target_parent: true,
+            ..KillOptions::default()
+        };
+        let targets = killer::plan(&[&node], &opts, &app.env);
+        app.kill_sent(&targets[0], Signal::Term, t0);
+        // The rescan right after the signal still shows the child: that's not a respawn.
+        app.apply_snapshot(snapshot(vec![node.clone()]), t0 + Duration::from_millis(50));
+        assert!(
+            app.status.as_ref().is_none_or(|s| !s.error),
+            "{:?}",
+            app.status.as_ref().map(|s| &s.text)
+        );
+        assert_eq!(app.pending_kills.len(), 1, "still waiting for the listener");
+        // Once the supervisor has taken its child down, the port is reported free.
+        app.apply_snapshot(snapshot(vec![]), t0 + Duration::from_secs(1));
+        let text = &app.status.as_ref().unwrap().text;
+        assert!(text.contains("nodemon") && text.contains("free"), "{text}");
+    }
+
+    #[test]
+    fn parent_kill_reports_a_surviving_listener() {
+        let t0 = Instant::now();
+        let node = supervised_node(200);
+        let mut app = app_with(vec![node.clone()]);
+        let opts = KillOptions {
+            target_parent: true,
+            ..KillOptions::default()
+        };
+        let targets = killer::plan(&[&node], &opts, &app.env);
+        app.kill_sent(&targets[0], Signal::Term, t0);
+        app.apply_snapshot(snapshot(vec![node]), t0 + Duration::from_secs(6));
+        let status = app.status.as_ref().unwrap();
+        assert!(
+            status.error && status.text.contains("still holds port 3000"),
+            "{}",
+            status.text
+        );
+        assert!(app.pending_kills.is_empty());
+    }
+
+    #[test]
+    fn respawned_listener_gets_a_tui_hint() {
+        let t0 = Instant::now();
+        let node = supervised_node(200);
+        let mut app = app_with(vec![node.clone()]);
+        let targets = killer::plan(&[&node], &KillOptions::default(), &app.env);
+        app.kill_sent(&targets[0], Signal::Term, t0);
+        app.apply_snapshot(
+            snapshot(vec![supervised_node(201)]),
+            t0 + Duration::from_secs(1),
+        );
+        let status = app.status.as_ref().unwrap();
+        assert!(status.error, "{}", status.text);
+        assert!(
+            status.text.contains("taken again by node (PID 201)")
+                && status.text.contains("nodemon")
+                && !status.text.contains("--parent"),
+            "{}",
+            status.text
+        );
     }
 
     // --- browser grouping ---

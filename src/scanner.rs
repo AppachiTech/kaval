@@ -484,6 +484,7 @@ impl Scanner {
                 e.parent = p.parent().map(|pp| ProcessRef {
                     pid: pp.as_u32(),
                     name: self.process_name(pp.as_u32()).unwrap_or_default(),
+                    start_time: self.sys.process(pp).map_or(0, |q| q.start_time()),
                 });
                 e.start_time = p.start_time();
                 e.cpu_percent = p.cpu_usage();
@@ -684,6 +685,7 @@ mod tests {
         worker.parent = Some(ProcessRef {
             pid: 52009,
             name: "Python".into(),
+            start_time: 0,
         });
         let mut other_port = worker.clone();
         other_port.port = 9000;
@@ -742,6 +744,11 @@ mod tests {
         assert!(e.cwd.is_some(), "cwd collected");
         assert!(e.user.is_some(), "user resolved");
         assert!(e.parent.is_some(), "parent resolved");
+        assert!(
+            e.parent.as_ref().is_some_and(|p| p.start_time > 0),
+            "parent start time collected: {:?}",
+            e.parent
+        );
         // cargo runs tests from the crate root, which is a git checkout under $HOME
         // on dev machines and CI runners alike.
         let cwd = std::env::current_dir().unwrap();

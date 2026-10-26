@@ -72,6 +72,8 @@ pub enum Exposure {
 pub struct ProcessRef {
     pub pid: u32,
     pub name: String,
+    /// Process start time (Unix seconds; 0 = unknown), so a reused PID is detected.
+    pub start_time: u64,
 }
 
 /// The container that publishes a port through a container runtime's proxy.
