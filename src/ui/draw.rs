@@ -120,8 +120,20 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(count, Style::default().fg(t.text_secondary)),
         Span::styled(
-            format!("  Sort: {}", app.sort_field.label()),
+            format!(
+                "  Sort: {}{}",
+                app.sort_field.label(),
+                if app.sort_reverse { " (reversed)" } else { "" }
+            ),
             Style::default().fg(t.text_muted),
+        ),
+        Span::styled(
+            if app.exposed_only {
+                "  [exposed only]"
+            } else {
+                ""
+            },
+            Style::default().fg(t.warning),
         ),
     ]);
 
@@ -134,6 +146,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 /// Table columns, most important first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Col {
+    /// `*` marked for a multi-row kill, `+` appeared recently.
+    Mark,
     Port,
     Proto,
     Bind,
@@ -146,7 +160,8 @@ enum Col {
     Uptime,
 }
 
-const COLUMNS: [Col; 10] = [
+const COLUMNS: [Col; 11] = [
+    Col::Mark,
     Col::Port,
     Col::Proto,
     Col::Bind,
@@ -171,6 +186,7 @@ const DROP_ORDER: [Col; 6] = [
 impl Col {
     fn header(self) -> &'static str {
         match self {
+            Col::Mark => "",
             Col::Port => "PORT",
             Col::Proto => "PROTO",
             Col::Bind => "BIND",
@@ -187,6 +203,7 @@ impl Col {
     /// Minimum width; PROCESS and SERVICE also share any spare space.
     fn width(self) -> u16 {
         match self {
+            Col::Mark => 1,
             Col::Port => 6,
             Col::Proto => 5,
             Col::Bind => 10,
@@ -221,11 +238,25 @@ fn columns_for(width: u16) -> Vec<Col> {
     cols
 }
 
-fn cell(col: Col, e: &PortEntry, group: usize) -> Cell<'static> {
+/// Per-row state that is not part of the entry itself.
+#[derive(Clone, Copy)]
+struct RowFlags {
+    group: usize,
+    marked: bool,
+    new: bool,
+}
+
+fn cell(col: Col, e: &PortEntry, flags: RowFlags) -> Cell<'static> {
     let t = theme();
     let style = |c| Style::default().fg(c);
     let category = t.category_color(e.category);
+    let group = flags.group;
     match col {
+        Col::Mark if flags.marked => {
+            Cell::from("*").style(Style::default().fg(t.warning).add_modifier(Modifier::BOLD))
+        }
+        Col::Mark if flags.new => Cell::from("+").style(style(t.success)),
+        Col::Mark => Cell::from(" "),
         Col::Port => Cell::from(if group > 1 {
             "···".to_string()
         } else {
@@ -296,17 +327,23 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         )
     }));
 
+    let now = std::time::Instant::now();
     let rows: Vec<Row> = app
         .filtered
         .iter()
         .map(|&idx| {
             let e = &app.entries[idx];
-            // For grouped browser entries, how many ports this (pid, service) has
-            let group = e
-                .browser_key()
-                .and_then(|key| app.browser_counts.get(&key).copied())
-                .unwrap_or(1);
-            Row::new(cols.iter().map(|c| cell(*c, e, group)))
+            let flags = RowFlags {
+                // For collapsed browser groups, how many ports this (pid, service) has
+                group: e
+                    .browser_key()
+                    .filter(|key| !app.is_expanded(key))
+                    .and_then(|key| app.browser_counts.get(&key).copied())
+                    .unwrap_or(1),
+                marked: app.marked.contains(&e.key()),
+                new: app.is_new(&e.key(), now),
+            };
+            Row::new(cols.iter().map(|c| cell(*c, e, flags)))
         })
         .collect();
 
@@ -482,21 +519,24 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-const HELP_ROWS: [(&str, &str); 17] = [
+const HELP_ROWS: [(&str, &str); 20] = [
     ("↑/↓  j/k", "Move selection (mouse wheel too)"),
     ("PgUp / PgDn", "Page the list"),
     ("Home / End", "Jump to top / bottom"),
     ("/", "Filter: port, PID, name, service, command…"),
-    ("Esc", "Clear the filter"),
-    ("Ctrl+X", "Kill selected (SIGTERM, confirm)"),
+    ("Esc", "Clear the filter, then the marks"),
+    ("Enter", "Expand / collapse a browser group"),
+    ("Space", "Mark rows for a multi-row kill"),
+    ("Ctrl+X", "Kill selected/marked (SIGTERM, confirm)"),
     ("Ctrl+K", "Force kill (SIGKILL, confirm)"),
-    ("Ctrl+D", "Toggle detail pane"),
+    ("e", "Only listeners exposed to the network"),
+    ("d / Ctrl+D", "Toggle detail pane"),
     ("[ / ]  ← / →", "Scroll detail pane"),
-    ("Ctrl+S", "Cycle sort: Port → Name → CPU → Mem"),
-    ("Ctrl+T", "Cycle protocols: TCP+UDP → TCP → UDP"),
-    ("Ctrl+R", "Refresh now"),
-    ("y", "Copy port number"),
-    ("o", "Open in browser"),
+    ("s / Ctrl+S", "Cycle sort: Port → Name → CPU → Mem"),
+    ("S", "Reverse the sort"),
+    ("t / Ctrl+T", "Cycle protocols: TCP+UDP → TCP → UDP"),
+    ("r / Ctrl+R", "Refresh now"),
+    ("y  o", "Copy port · Open in browser"),
     ("Ctrl+Z", "Suspend"),
     ("q / Ctrl+Q", "Quit"),
     ("?", "Show / dismiss this help"),
@@ -504,7 +544,7 @@ const HELP_ROWS: [(&str, &str); 17] = [
 
 fn draw_help_overlay(f: &mut Frame, app: &mut App) {
     let t = theme();
-    let mut lines = vec![Line::from("")];
+    let mut lines = Vec::new();
     for (key, desc) in HELP_ROWS {
         lines.push(Line::from(vec![
             Span::styled(
@@ -676,6 +716,39 @@ mod tests {
             entry(6379, 33, "redis-server"),
             entry(8080, 44, "caddy"),
         ]
+    }
+
+    #[test]
+    fn gutter_marks_new_and_marked_rows() {
+        let mut app = app_with(vec![entry(3000, 11, "node"), entry(5432, 22, "postgres")]);
+        app.show_detail = false;
+        app.apply_snapshot(
+            Snapshot {
+                entries: vec![
+                    entry(3000, 11, "node"),
+                    entry(5432, 22, "postgres"),
+                    entry(7777, 33, "newcomer"),
+                ],
+                visibility: Visibility::Complete,
+            },
+            Instant::now(),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)); // mark 3000
+        let out = render(&mut app, 120, 10);
+        let row = |port: &str| out.iter().find(|l| l.contains(port)).unwrap().clone();
+        assert!(row("3000").starts_with("│*"), "{}", row("3000"));
+        assert!(row("7777").starts_with("│+"), "{}", row("7777"));
+        assert!(row("5432").starts_with("│ "), "{}", row("5432"));
+    }
+
+    #[test]
+    fn header_shows_exposed_only_and_reversed_sort() {
+        let mut app = app_with(seven());
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT));
+        let out = render(&mut app, 160, 12);
+        assert!(out[1].contains("exposed only"), "{}", out[1]);
+        assert!(out[1].contains("reversed"), "{}", out[1]);
     }
 
     #[test]
