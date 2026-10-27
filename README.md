@@ -382,7 +382,7 @@ The detail pane shows the bind address and whether it is reachable from other ma
 ## Links
 
 - [Website](https://www.appachi.tech/kaval/)
-- [FAQ](https://www.appachi.tech/kaval/faq)
+- [FAQ](https://www.appachi.tech/kaval#faq)
 - [Privacy Policy](https://www.appachi.tech/kaval/privacy/)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
