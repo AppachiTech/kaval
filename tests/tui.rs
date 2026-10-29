@@ -27,7 +27,8 @@ impl Pty {
     /// control works as in a real terminal: `cmd &` runs in a background process group.
     fn shell(cols: u16, rows: u16) -> Pty {
         let mut cmd = Command::new("bash");
-        cmd.args(["--norc", "--noprofile", "-i"]);
+        // +H: no history expansion — bash 3.2 (macOS /bin/bash) would expand the `!` in `$!`.
+        cmd.args(["--norc", "--noprofile", "+H", "-i"]);
         Pty::start(cmd, cols, rows, true)
     }
 
@@ -46,7 +47,8 @@ impl Pty {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut size,
+                // A raw pointer: Linux takes `*const winsize`, macOS `*mut winsize`.
+                &raw mut size,
             )
         };
         assert_eq!(rc, 0, "openpty failed");
@@ -107,10 +109,14 @@ impl Pty {
     fn wait_for(&self, needle: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !self.contains(needle.as_bytes()) {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {needle:?}"
-            );
+            if Instant::now() >= deadline {
+                let out = self.output();
+                let tail = &out[out.len().saturating_sub(2000)..];
+                panic!(
+                    "timed out waiting for {needle:?}; output so far:\n{}",
+                    String::from_utf8_lossy(tail)
+                );
+            }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
