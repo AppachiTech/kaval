@@ -75,7 +75,9 @@ jobs:
           lipo -create -output kav \
             target/aarch64-apple-darwin/release/kav \
             target/x86_64-apple-darwin/release/kav
-          lipo -verify_arch kav arm64 x86_64
+          # One architecture per call: lipo reads extra arguments as input files.
+          lipo kav -verify_arch arm64
+          lipo kav -verify_arch x86_64
           lipo -info kav
           ./kav --version | grep -F " ${TAG#v} "
           ./kav list
