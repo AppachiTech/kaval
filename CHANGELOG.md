@@ -5,7 +5,7 @@ All notable changes to Kaval will be documented in this file.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-27
+## [0.2.0] - 2026-10-29
 
 Kaval now shows who owns each port, which project and container it belongs to, and whether other machines can reach it. Kills are verified, scripts get versioned JSON plus `kav wait` and `kav pick`, and release downloads cover Intel Macs and Linux on arm64.
 
